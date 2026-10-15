@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>台1線南下出發日</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* 版面概念：像一張騎車前看的「路況單」——上面是路線里程條和推薦日，下面是每個出發日的分數卡 */
+:root {
+  --bg: #f1f4f8;
+  --surface: #ffffff;
+  --fg: #152033;
+  --muted: #5a6577;
+  --line: #d6dce5;
+  --accent: #1d5ca8;      /* 公路標誌藍 */
+  --accent-soft: #e2ebf7;
+  --good: #1b7a45;
+  --good-soft: #def2e6;
+  --warn: #a8670f;
+  --warn-soft: #f8ecd6;
+  --bad: #b8352a;
+  --bad-soft: #f8e0dd;
+  --font-display: "Barlow Condensed", "Arial Narrow", "Noto Sans TC", sans-serif;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #171f2a; --fg: #e5eaf1; --muted: #97a2b3; --line: #2a3443;
+    --accent: #6fa5ea; --accent-soft: #1b2a40;
+    --good: #52c487; --good-soft: #15301f; --warn: #e6ab4c; --warn-soft: #33270f;
+    --bad: #f0786b; --bad-soft: #3a1a17;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #171f2a; --fg: #e5eaf1; --muted: #97a2b3; --line: #2a3443;
+  --accent: #6fa5ea; --accent-soft: #1b2a40;
+  --good: #52c487; --good-soft: #15301f; --warn: #e6ab4c; --warn-soft: #33270f;
+  --bad: #f0786b; --bad-soft: #3a1a17;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); background: var(--bg); }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 28px;
+}
+h1, h2, h3 { margin: 0; text-wrap: balance; line-height: 1.25; }
+h1 { font-size: 1.7rem; font-weight: 700; }
+h2 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; }
+.num { font-family: var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: 0.01em; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+
+/* ---------- 標題區 ---------- */
+header { display: grid; gap: 14px; }
+.shield {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 46px; height: 50px;
+  background: var(--accent); color: var(--bg);
+  border-radius: 6px 6px 23px 23px;
+  font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; line-height: 1;
+  flex: none;
+}
+.title-row { display: flex; align-items: center; gap: 14px; }
+.title-row p { color: var(--muted); font-size: 0.9rem; }
+
+/* 路線里程條 */
+.route { display: grid; gap: 6px; }
+.route-bar { position: relative; height: 8px; border-radius: 4px; background: var(--line); }
+.route-bar .seg { position: absolute; top: 0; height: 100%; border-radius: 4px; }
+.route-bar .d1 { left: 0; width: 51.6%; background: var(--accent); }
+.route-bar .d2 { left: 51.6%; width: 48.4%; background: var(--accent); opacity: 0.55; }
+.route-stops { position: relative; height: 2.6em; font-size: 0.8rem; }
+.route-stops span { position: absolute; transform: translateX(-50%); white-space: nowrap; text-align: center; line-height: 1.2; }
+.route-stops span:first-child { transform: none; text-align: left; }
+.route-stops span:last-child { transform: translateX(-100%); text-align: right; }
+.route-stops b { display: block; font-weight: 500; }
+.route-stops i { font-style: normal; color: var(--muted); font-family: var(--font-display); }
+
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 0.85rem; color: var(--muted); }
+button {
+  font: inherit; font-size: 0.85rem; font-weight: 500;
+  color: var(--accent); background: var(--accent-soft);
+  border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { filter: brightness(0.96); }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- 推薦出發日 ---------- */
+.best {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  display: grid; gap: 14px;
+}
+.best-top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.best .eyebrow { font-size: 0.8rem; color: var(--muted); letter-spacing: 0.08em; }
+.best .date { font-family: var(--font-display); font-size: 2.6rem; font-weight: 700; line-height: 1; }
+.best .date small { font-family: var(--font-body); font-size: 1rem; font-weight: 500; color: var(--muted); margin-left: 6px; }
+.big-score { text-align: right; }
+.big-score .num { font-size: 3rem; font-weight: 700; line-height: 1; }
+.big-score .num small { font-size: 1.1rem; color: var(--muted); }
+.best-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.day-box { background: var(--bg); border-radius: 8px; padding: 10px 12px; display: grid; gap: 4px; min-width: 0; }
+.day-box h3 { font-size: 0.9rem; font-weight: 500; display: flex; justify-content: space-between; gap: 8px; }
+
+/* ---------- 分數顏色 ---------- */
+.pill { display: inline-block; font-size: 0.78rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.lv-good { color: var(--good); } .pill.lv-good { background: var(--good-soft); }
+.lv-ok   { color: var(--accent); } .pill.lv-ok { background: var(--accent-soft); }
+.lv-warn { color: var(--warn); } .pill.lv-warn { background: var(--warn-soft); }
+.lv-bad  { color: var(--bad); } .pill.lv-bad { background: var(--bad-soft); }
+
+/* ---------- 每個出發日的列表 ---------- */
+.list { display: grid; gap: 8px; }
+.list-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+details.trip {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+details.trip.is-best { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+details.trip summary {
+  list-style: none; cursor: pointer;
+  display: grid;
+  grid-template-columns: 4.6rem 1fr auto;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 12px 14px;
+}
+details.trip summary::-webkit-details-marker { display: none; }
+.t-date { display: grid; line-height: 1.15; }
+.t-date .num { font-size: 1.5rem; font-weight: 700; }
+.t-date span:last-child { font-size: 0.8rem; color: var(--muted); }
+.t-date .weekend { color: var(--accent); font-weight: 700; }
+.t-mid { display: grid; gap: 6px; min-width: 0; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar > div { height: 100%; border-radius: 3px; background: currentColor; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; color: var(--muted); }
+.chips b { font-weight: 500; color: var(--fg); }
+.t-score { text-align: right; display: grid; justify-items: end; gap: 2px; }
+.t-score .num { font-size: 1.7rem; font-weight: 700; line-height: 1; }
+.conf { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+
+.detail { padding: 0 14px 14px; display: grid; gap: 16px; }
+.detail h3 { font-size: 0.9rem; font-weight: 700; }
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.82rem; min-width: 480px; }
+th, td { padding: 5px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th { font-weight: 500; color: var(--muted); background: var(--bg); }
+th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-size: 0.95rem; }
+
+/* ---------- 說明區 ---------- */
+.how { display: grid; gap: 10px; font-size: 0.9rem; }
+.how ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.how li { max-width: 65ch; }
+
+.msg { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 20px; text-align: center; color: var(--muted); display: grid; gap: 10px; justify-items: center; }
+.msg.error { border-color: var(--bad); color: var(--fg); }
+
+@media (max-width: 480px) {
+  .best .date { font-size: 2.1rem; }
+  .big-score .num { font-size: 2.5rem; }
+  details.trip summary { grid-template-columns: 3.9rem 1fr auto; gap: 4px 10px; padding: 10px 12px; }
+  .route-stops .hide-sm { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bar > div { transition: width 0.4s ease; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="title-row">
+      <div class="shield" aria-hidden="true">台1</div>
+      <div>
+        <h1>台1線南下出發日</h1>
+        <p>新竹騎到高雄・2 天・每天 06:00–18:00</p>
+      </div>
+    </div>
+
+    <div class="route" aria-label="路線：新竹到斗南 160 公里，斗南到高雄 150 公里">
+      <div class="route-bar"><div class="seg d1"></div><div class="seg d2"></div></div>
+      <div class="route-stops">
+        <span style="left:0"><b>新竹</b><i>0 km</i></span>
+        <span style="left:33.9%" class="hide-sm"><b>彰化</b><i>105</i></span>
+        <span style="left:51.6%"><b>斗南</b><i>160 km</i></span>
+        <span style="left:82.3%" class="hide-sm"><b>台南</b><i>255</i></span>
+        <span style="left:100%"><b>高雄</b><i>310 km</i></span>
+      </div>
+    </div>
+
+    <div class="status">
+      <span id="status">正在抓取天氣預報…</span>
+      <button id="reload" type="button">重新整理</button>
+    </div>
+  </header>
+
+  <section id="best" aria-live="polite"></section>
+
+  <section class="list">
+    <div class="list-head">
+      <h2>每個出發日</h2>
+      <span class="small muted">點一下可以看每小時的細節</span>
+    </div>
+    <div id="trips"></div>
+  </section>
+
+  <section class="how">
+    <h2>分數怎麼算</h2>
+    <ul>
+      <li>假設你 06:00 出發、18:00 到，速度平均。每個小時算出你大概騎到哪裡，再拿那個地點那個小時的預報來評分。</li>
+      <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。</li>
+      <li><b>風</b>：只看「順著路線方向」的那一部分。順風每 1 km/h 加 0.5 分（最多 +10），逆風每 1 km/h 扣 1.2 分（最多 −36）。陣風超過 45 km/h 另外扣分。</li>
+      <li><b>氣溫</b>：體感溫度超過 33°C，每多 1 度扣 5 分；低於 12°C，每少 1 度扣 3 分。</li>
+      <li>每小時從 100 分開始扣，一天取平均。兩天合起來時，比較差的那天佔 2/3、比較好的那天佔 1/3，因為只要有一天很糟，整趟就會很辛苦。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
+      <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>。預報越遠越不準，8 天以後的分數只能當參考。</li>
+    </ul>
+  </section>
+
+</div>
+
+<script>
+// =====================================================
+// 1. 路線設定：台1線上的檢查點，km 是從新竹算起的大約里程
+// =====================================================
+const ROUTE = [
+  { name: "新竹", lat: 24.804, lon: 120.968, km: 0 },
+  { name: "通霄", lat: 24.489, lon: 120.677, km: 50 },
+  { name: "大甲", lat: 24.348, lon: 120.623, km: 70 },
+  { name: "彰化", lat: 24.081, lon: 120.538, km: 105 },
+  { name: "北斗", lat: 23.871, lon: 120.520, km: 130 },
+  { name: "斗南", lat: 23.679, lon: 120.479, km: 160 },
+  { name: "嘉義", lat: 23.480, lon: 120.449, km: 185 },
+  { name: "新營", lat: 23.310, lon: 120.316, km: 210 },
+  { name: "台南", lat: 22.993, lon: 120.205, km: 255 },
+  { name: "岡山", lat: 22.796, lon: 120.296, km: 285 },
+  { name: "高雄", lat: 22.627, lon: 120.301, km: 310 },
+];
+
+// 兩天的行程：每天從哪個里程騎到哪個里程
+const DAYS = [
+  { label: "第 1 天", from: "新竹", to: "斗南", startKm: 0, endKm: 160 },
+  { label: "第 2 天", from: "斗南", to: "高雄", startKm: 160, endKm: 310 },
+];
+
+const START_HOUR = 6;   // 幾點出發
+const END_HOUR = 18;    // 幾點到
+
+const CACHE_KEY = "bike-south-forecast";
+
+// =====================================================
+// 2. 小工具
+// =====================================================
+
+// 計算從 a 點到 b 點的方位角（0 = 往北，90 = 往東，180 = 往南）
+function bearing(a, b) {
+  const toRad = d => d * Math.PI / 180;
+  const φ1 = toRad(a.lat), φ2 = toRad(b.lat);
+  const Δλ = toRad(b.lon - a.lon);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+// 給一個里程，回傳「最近的檢查點」和「那一段路往哪個方向騎」
+function whereAmI(km) {
+  let i = 0;
+  while (i < ROUTE.length - 2 && km >= ROUTE[i + 1].km) i++;
+  const a = ROUTE[i], b = ROUTE[i + 1];
+  const nearest = (km - a.km) < (b.km - km) ? i : i + 1;
+  return { pointIndex: nearest, heading: bearing(a, b) };
+}
+
+// 把風拆成「順著路線」的分量。正數 = 順風，負數 = 逆風
+// 注意：氣象的風向是「風從哪裡吹來」，所以風往 (風向 + 180) 的方向吹
+function tailwind(windSpeed, windFrom, heading) {
+  const windTo = (windFrom + 180) % 360;
+  const diff = (windTo - heading) * Math.PI / 180;
+  return windSpeed * Math.cos(diff);
+}
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// 依分數給等級
+function level(score) {
+  if (score >= 80) return { cls: "lv-good", text: "適合出發" };
+  if (score >= 60) return { cls: "lv-ok", text: "可以考慮" };
+  if (score >= 40) return { cls: "lv-warn", text: "勉強" };
+  return { cls: "lv-bad", text: "不建議" };
+}
+
+const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+function dateParts(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const wd = new Date(y, m - 1, d).getDay();
+  return { md: `${m}/${d}`, weekday: `週${WEEKDAYS[wd]}`, weekend: wd === 0 || wd === 6 };
+}
+
+// =====================================================
+// 3. 評分：一個小時的天氣 → 0~100 分
+// =====================================================
+function scoreHour(w, heading) {
+  let score = 100;
+
+  // 下雨
+  const prob = w.rainProb ?? 0;
+  const mm = w.rain ?? 0;
+  const rainPenalty = prob * 0.35 + Math.min(mm, 4) * 15;
+  score -= rainPenalty;
+
+  // 風（順風加分、逆風扣分）
+  const along = tailwind(w.wind ?? 0, w.windDir ?? 0, heading);
+  let windAdj = along >= 0 ? Math.min(along, 20) * 0.5 : -Math.min(-along, 30) * 1.2;
+  if ((w.gust ?? 0) > 45) windAdj -= Math.min(w.gust - 45, 20);
+  score += windAdj;
+
+  // 氣溫（用體感溫度）
+  const t = w.feels ?? w.temp ?? 25;
+  let heatPenalty = 0;
+  if (t > 33) heatPenalty = Math.min((t - 33) * 5, 30);
+  if (t < 12) heatPenalty = Math.min((12 - t) * 3, 20);
+  score -= heatPenalty;
+
+  return { score: clamp(score, 0, 100), along };
+}
+
+// =====================================================
+// 4. 把 Open-Meteo 的資料整理成「某地點、某日期、某小時」查得到的樣子
+// =====================================================
+function buildLookup(apiData) {
+  const list = Array.isArray(apiData) ? apiData : [apiData];
+  return list.map(loc => {
+    const h = loc.hourly;
+    const byTime = new Map();
+    h.time.forEach((time, i) => {
+      byTime.set(time, {
+        temp: h.temperature_2m[i],
+        feels: h.apparent_temperature[i],
+        rainProb: h.precipitation_probability[i],
+        rain: h.precipitation[i],
+        wind: h.wind_speed_10m[i],
+        windDir: h.wind_direction_10m[i],
+        gust: h.wind_gusts_10m[i],
+      });
+    });
+    return byTime;
+  });
+}
+
+// 算某一天（第 1 天或第 2 天）在某個日期騎的話，每小時的狀況
+function evaluateDay(lookup, dateStr, day) {
+  const hours = [];
+  const totalHours = END_HOUR - START_HOUR;
+  for (let h = START_HOUR; h < END_HOUR; h++) {
+    // 這個小時的中間點，大概騎到哪個里程
+    const progress = (h - START_HOUR + 0.5) / totalHours;
+    const km = day.startKm + progress * (day.endKm - day.startKm);
+    const { pointIndex, heading } = whereAmI(km);
+    const time = `${dateStr}T${String(h).padStart(2, "0")}:00`;
+    const w = lookup[pointIndex].get(time);
+    if (!w) return null; // 預報沒涵蓋到這天
+    const { score, along } = scoreHour(w, heading);
+    hours.push({ hour: h, km, place: ROUTE[pointIndex].name, w, score, along });
+  }
+  const avg = hours.reduce((s, x) => s + x.score, 0) / hours.length;
+  return {
+    hours,
+    score: Math.round(avg),
+    maxRainProb: Math.max(...hours.map(x => x.w.rainProb ?? 0)),
+    totalRain: hours.reduce((s, x) => s + (x.w.rain ?? 0), 0),
+    avgAlong: hours.reduce((s, x) => s + x.along, 0) / hours.length,
+    maxFeels: Math.max(...hours.map(x => x.w.feels ?? x.w.temp ?? 0)),
+  };
+}
+
+// 列出所有可以出發的日期（明天起，而且隔天也要有預報）
+function evaluateAll(apiData) {
+  const lookup = buildLookup(apiData);
+  const first = Array.isArray(apiData) ? apiData[0] : apiData;
+  const dates = [...new Set(first.hourly.time.map(t => t.slice(0, 10)))];
+
+  const trips = [];
+  for (let i = 1; i < dates.length - 1; i++) {
+    const d1 = evaluateDay(lookup, dates[i], DAYS[0]);
+    const d2 = evaluateDay(lookup, dates[i + 1], DAYS[1]);
+    if (!d1 || !d2) continue;
+    trips.push({
+      date: dates[i],
+      daysAhead: i,
+      days: [d1, d2],
+      // 兩天裡比較差的那天佔 2/3，避免「一天很好、一天大雨」被平均掉
+      score: Math.round((2 * Math.min(d1.score, d2.score) + Math.max(d1.score, d2.score)) / 3),
+    });
+  }
+  return trips;
+}
+
+// =====================================================
+// 5. 畫面
+// =====================================================
+function windText(along) {
+  const v = Math.round(Math.abs(along));
+  if (v < 3) return "幾乎無風";
+  return along > 0 ? `順風 ${v}` : `逆風 ${v}`;
+}
+
+function confidence(daysAhead) {
+  if (daysAhead <= 3) return "預報較準";
+  if (daysAhead <= 7) return "預報普通";
+  return "僅供參考";
+}
+
+function daySummaryHTML(day) {
+  return `
+    <span>雨 <b class="num">${Math.round(day.maxRainProb)}%</b></span>
+    <span><b>${windText(day.avgAlong)}</b>${Math.abs(day.avgAlong) >= 3 ? " km/h" : ""}</span>
+    <span>體感最高 <b class="num">${Math.round(day.maxFeels)}°</b></span>`;
+}
+
+function renderBest(trips) {
+  const box = document.getElementById("best");
+  // 優先挑 8 天內（預報比較準）的最高分；如果 8 天內都沒有，再從全部挑
+  const near = trips.filter(t => t.daysAhead <= 7);
+  const pool = near.length ? near : trips;
+  const best = pool.reduce((a, b) => (b.score > a.score ? b : a));
+  const lv = level(best.score);
+  const p = dateParts(best.date);
+  const p2 = dateParts(nextDate(best.date));
+
+  box.innerHTML = `
+    <div class="best">
+      <div class="best-top">
+        <div>
+          <div class="eyebrow">未來一週最推薦的出發日</div>
+          <div class="date">${p.md}<small>${p.weekday} 出發・${p2.weekday} 到高雄</small></div>
+        </div>
+        <div class="big-score">
+          <div class="num ${lv.cls}">${best.score}<small> / 100</small></div>
+          <span class="pill ${lv.cls}">${lv.text}</span>
+        </div>
+      </div>
+      <div class="best-days">
+        ${best.days.map((d, i) => `
+          <div class="day-box">
+            <h3><span>${DAYS[i].label}：${DAYS[i].from} → ${DAYS[i].to}</span><span class="num ${level(d.score).cls}">${d.score}</span></h3>
+            <div class="chips">${daySummaryHTML(d)}</div>
+          </div>`).join("")}
+      </div>
+    </div>`;
+  return best;
+}
+
+function hourTableHTML(day) {
+  const rows = day.hours.map(x => `
+    <tr>
+      <td class="num">${String(x.hour).padStart(2, "0")}:00</td>
+      <td>${x.place}</td>
+      <td class="num">${Math.round(x.w.rainProb ?? 0)}%</td>
+      <td class="num">${(x.w.rain ?? 0).toFixed(1)}</td>
+      <td>${windText(x.along)}</td>
+      <td class="num">${Math.round(x.w.gust ?? 0)}</td>
+      <td class="num">${Math.round(x.w.feels ?? x.w.temp)}°</td>
+      <td class="num ${level(x.score).cls}">${Math.round(x.score)}</td>
+    </tr>`).join("");
+  return `
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>時間</th><th>大約位置</th><th>降雨機率</th><th>雨量 mm</th>
+          <th>風 km/h</th><th>陣風</th><th>體感</th><th>分數</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderTrips(trips, best) {
+  const box = document.getElementById("trips");
+  box.innerHTML = trips.map(t => {
+    const lv = level(t.score);
+    const p = dateParts(t.date);
+    const worst = Math.min(t.days[0].score, t.days[1].score);
+    return `
+      <details class="trip ${t === best ? "is-best" : ""}">
+        <summary>
+          <div class="t-date">
+            <span class="num">${p.md}</span>
+            <span class="${p.weekend ? "weekend" : ""}">${p.weekday}</span>
+          </div>
+          <div class="t-mid">
+            <div class="bar ${lv.cls}"><div style="width:${t.score}%"></div></div>
+            <div class="chips">
+              <span>雨 <b class="num">${Math.round(Math.max(t.days[0].maxRainProb, t.days[1].maxRainProb))}%</b></span>
+              <span><b>${windText((t.days[0].avgAlong + t.days[1].avgAlong) / 2)}</b></span>
+              <span>體感 <b class="num">${Math.round(Math.max(t.days[0].maxFeels, t.days[1].maxFeels))}°</b></span>
+              <span>較差那天 <b class="num">${worst}</b></span>
+            </div>
+          </div>
+          <div class="t-score">
+            <span class="num ${lv.cls}">${t.score}</span>
+            <span class="conf">${t === best ? "推薦・" : ""}${confidence(t.daysAhead)}</span>
+          </div>
+        </summary>
+        <div class="detail">
+          ${t.days.map((d, i) => `
+            <div style="display:grid;gap:8px">
+              <h3>${DAYS[i].label}（${dateParts(i === 0 ? t.date : nextDate(t.date)).md}）${DAYS[i].from} → ${DAYS[i].to}　<span class="num ${level(d.score).cls}">${d.score} 分</span></h3>
+              ${hourTableHTML(d)}
+            </div>`).join("")}
+        </div>
+      </details>`;
+  }).join("");
+}
+
+function nextDate(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const n = new Date(y, m - 1, d + 1);
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+}
+
+function render(apiData, fetchedAt, fromCache) {
+  const trips = evaluateAll(apiData);
+  if (!trips.length) throw new Error("預報資料裡找不到可以評分的日期");
+  const best = renderBest(trips);
+  renderTrips(trips, best);
+  const time = new Date(fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  document.getElementById("status").textContent = fromCache
+    ? `目前連不上網路，顯示 ${time} 存下來的預報`
+    : `預報更新時間：${time}`;
+}
+
+function showError(message) {
+  document.getElementById("best").innerHTML = `
+    <div class="msg error">
+      <p><b>抓不到天氣預報</b></p>
+      <p class="small">${message}。請確認網路有連上，再按「重新整理」。</p>
+    </div>`;
+  document.getElementById("trips").innerHTML = "";
+  document.getElementById("status").textContent = "沒有資料";
+}
+
+// =====================================================
+// 6. 抓資料：一次把 11 個檢查點的預報都要回來
+// =====================================================
+async function load() {
+  const status = document.getElementById("status");
+  status.textContent = "正在抓取天氣預報…";
+  document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
+
+  const params = new URLSearchParams({
+    latitude: ROUTE.map(p => p.lat).join(","),
+    longitude: ROUTE.map(p => p.lon).join(","),
+    hourly: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+    timezone: "Asia/Taipei",
+    forecast_days: "16",
+    wind_speed_unit: "kmh",
+  });
+
+  try {
+    const res = await fetch("https://api.open-meteo.com/v1/forecast?" + params);
+    if (!res.ok) throw new Error(`天氣服務回應錯誤（${res.status}）`);
+    const data = await res.json();
+    const fetchedAt = Date.now();
+    render(data, fetchedAt, false);
+    // 存一份在瀏覽器裡，下次沒網路時還能看
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt, data })); } catch (e) {}
+  } catch (err) {
+    // 抓失敗的話，試著用上次存下來的資料
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) {}
+    if (cached) {
+      try { render(cached.data, cached.fetchedAt, true); return; } catch (e) {}
+    }
+    showError(err.message || "發生錯誤");
+  }
+}
+
+document.getElementById("reload").addEventListener("click", load);
+load();
+</script>
+</body>
+</html>
