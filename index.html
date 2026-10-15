@@ -167,7 +167,7 @@ details.trip summary::-webkit-details-marker { display: none; }
 .detail { padding: 0 14px 14px; display: grid; gap: 16px; }
 .detail h3 { font-size: 0.9rem; font-weight: 700; }
 .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
-table { border-collapse: collapse; width: 100%; font-size: 0.82rem; min-width: 540px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.82rem; min-width: 640px; }
 th, td { padding: 5px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
 th { font-weight: 500; color: var(--muted); background: var(--bg); }
 th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
@@ -191,6 +191,22 @@ td.num { font-size: 0.95rem; }
 @media (prefers-reduced-motion: no-preference) {
   .bar > div { transition: width 0.4s ease; }
 }
+/* ---------- 風向箭頭與風的那一行 ---------- */
+.arrow { display: inline-block; vertical-align: middle; flex: none; }
+.arrow.calm { width: 18px; text-align: center; color: var(--muted); font-weight: 700; }
+.arrows { display: inline-flex; gap: 2px; align-items: center; }
+.windline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.windline .w-main { font-weight: 700; }
+.windline .w-time { font-size: 0.85rem; color: var(--muted); }
+.windline .w-time b { font-weight: 700; }
+.chips .lead { font-size: 0.85rem; }
+
+/* ---------- 空氣品質勾選 ---------- */
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--fg); cursor: pointer; }
+.toggle input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.toggle .muted { font-size: 0.8rem; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--muted); align-items: center; }
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
 </style>
 </head>
 <body>
@@ -201,7 +217,7 @@ td.num { font-size: 0.95rem; }
       <div class="shield" aria-hidden="true">台1</div>
       <div>
         <h1>台1線南下出發日</h1>
-        <p>新竹騎到高雄・2 天・每天 06:00–18:00</p>
+        <p>新竹騎到高雄・2 天・每天 06:00–18:00・以風為主要考量</p>
       </div>
     </div>
 
@@ -219,6 +235,10 @@ td.num { font-size: 0.95rem; }
     <div class="status">
       <span id="status">正在抓取天氣預報…</span>
       <button id="reload" type="button">重新整理</button>
+      <label class="toggle" for="use-air">
+        <input type="checkbox" id="use-air">
+        空氣品質也算進分數 <span class="muted">（預報只有約 5 天）</span>
+      </label>
     </div>
   </header>
 
@@ -229,19 +249,22 @@ td.num { font-size: 0.95rem; }
       <h2>每個出發日</h2>
       <span class="small muted">點一下可以看每小時的細節</span>
     </div>
+    <div class="legend" id="legend"></div>
     <div id="trips"></div>
   </section>
 
   <section class="how">
     <h2>分數怎麼算</h2>
     <ul>
-      <li>假設你 06:00 出發、18:00 到，速度平均。每個小時算出你大概騎到哪裡，再拿那個地點那個小時的預報來評分。</li>
+      <li><b>風是主要考量。</b>假設你騎載行李的旅行車，無風時速 22 km/h。用騎車的空氣阻力公式算出：用同樣的力氣，在那個小時的順風或逆風下能騎多快。再把每小時加起來，得到這天的「純騎乘時間」（不含休息）。</li>
+      <li><b>風的分數</b>：無風是 80 分。比無風每省 1% 的時間加 1 分（最高 100），每多花 1% 的時間扣 1 分。例如順風省下 15% 的時間是 95 分，逆風多花 25% 的時間是 55 分。</li>
+      <li>天氣預報的風速是離地 10 公尺的風。騎車的高度風比較小，所以用 70% 來計算。畫面上顯示的風速還是預報原本的數字，方便跟其他天氣 App 對照。</li>
+      <li><b>危險的風另外扣分</b>：側風超過 25 km/h，每多 1 km/h 扣 1 分（最多 −15）；陣風超過 40 km/h，每多 1 km/h 扣 1.5 分（最多 −25）。</li>
       <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。</li>
-      <li><b>風</b>：只看「順著路線方向」的那一部分。順風每 1 km/h 加 0.5 分（最多 +10），逆風每 1 km/h 扣 1.2 分（最多 −36）。陣風超過 45 km/h 另外扣分。</li>
-      <li><b>氣溫</b>：每個小時的體感溫度超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。另外，一整天最熱的時候超過 35°C，因為熱會累積，那一天再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
-      <li><b>空氣品質</b>：用 AQI（分級跟環境部一樣）。51–100 普通，每多 1 扣 0.2 分；101–150 對敏感族群不健康，每多 1 扣 0.4 分；150 以上再加扣，最多一共 −45。空品預報只有大約 5 天，更遠的日子不算這一項。</li>
-      <li>每小時從 100 分開始扣，一天取平均。兩天合起來時，比較差的那天佔 2/3、比較好的那天佔 1/3，因為只要有一天很糟，整趟就會很辛苦。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
-      <li>天氣和空氣品質資料都來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>。預報越遠越不準，8 天以後的分數只能當參考。空品預報的地圖格子比較粗（一格約 40 公里），跟<a href="https://airtw.moenv.gov.tw/" target="_blank" rel="noopener">環境部空氣品質監測網</a>的測站數值可能有落差，出發前可以再對照一下。</li>
+      <li><b>氣溫</b>：每小時體感溫度超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。一天最熱的時候超過 35°C，那天再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
+      <li><b>空氣品質（選用）</b>：勾選後才會算。用 AQI（分級跟環境部一樣）：51–100 每多 1 扣 0.2 分，101–150 每多 1 扣 0.4 分，150 以上再加扣，最多一共 −45。空品預報只有大約 5 天，更遠的日子不算這一項。</li>
+      <li><b>合起來</b>：一天的分數 = 風的分數 − 每小時雨、熱、危險風（和空品）扣分的平均 − 整天高溫扣分。兩天合起來時，比較差的那天佔 2/3、比較好的那天佔 1/3。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
+      <li>資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>。預報越遠越不準，8 天以後的分數只能當參考。空品預報的地圖格子比較粗（一格約 40 公里），出發前可以再對照<a href="https://airtw.moenv.gov.tw/" target="_blank" rel="noopener">環境部空氣品質監測網</a>。</li>
     </ul>
   </section>
 
@@ -274,7 +297,18 @@ const DAYS = [
 const START_HOUR = 6;   // 幾點出發
 const END_HOUR = 18;    // 幾點到
 
+// 騎車的人和車（用來算順風、逆風下的時速）
+const RIDER = {
+  calmKmh: 22,   // 無風時的時速
+  mass: 95,      // 人 + 車 + 行李（公斤）
+  crr: 0.007,    // 輪胎滾動阻力係數（旅行車胎）
+  cda: 0.55,     // 迎風面積 × 風阻係數（坐姿偏直、有掛包）
+  rho: 1.2,      // 空氣密度
+};
+const WIND_HEIGHT_FACTOR = 0.7; // 預報是 10 公尺高的風，騎車高度的風大約只有 70%
+
 const CACHE_KEY = "bike-south-forecast";
+const AIR_PREF_KEY = "bike-south-use-air";
 
 // =====================================================
 // 2. 小工具
@@ -299,15 +333,39 @@ function whereAmI(km) {
   return { pointIndex: nearest, heading: bearing(a, b) };
 }
 
-// 把風拆成「順著路線」的分量。正數 = 順風，負數 = 逆風
+// 把風拆成兩個部分：
+//   along：順著路線的部分（正數 = 順風，負數 = 逆風）
+//   cross：橫著吹的部分（側風，正數 = 從左邊吹向右邊）
 // 注意：氣象的風向是「風從哪裡吹來」，所以風往 (風向 + 180) 的方向吹
-function tailwind(windSpeed, windFrom, heading) {
+function windParts(speed, windFrom, heading) {
   const windTo = (windFrom + 180) % 360;
   const diff = (windTo - heading) * Math.PI / 180;
-  return windSpeed * Math.cos(diff);
+  return { along: speed * Math.cos(diff), cross: speed * Math.sin(diff) };
+}
+
+// 用騎車的力學公式：同樣的力氣，在某個順風／逆風下能騎多快（km/h）
+//   力氣（功率）= 速度 × (滾動阻力 + 空氣阻力)
+//   空氣阻力看的是「車速 − 順風速度」，逆風時這個差會變大
+const G = 9.81;
+const ROLL_FORCE = RIDER.crr * RIDER.mass * G;
+const AIR_K = 0.5 * RIDER.rho * RIDER.cda;
+const CALM_V = RIDER.calmKmh / 3.6; // 換成 公尺/秒
+const POWER = CALM_V * (ROLL_FORCE + AIR_K * CALM_V * CALM_V); // 無風騎 22 km/h 要出的力
+
+function riderSpeed(alongKmh) {
+  const w = alongKmh * WIND_HEIGHT_FACTOR / 3.6; // 騎車高度的順風（公尺/秒）
+  const powerAt = v => v * (ROLL_FORCE + AIR_K * (v - w) * Math.abs(v - w));
+  // 二分法：一直猜一個速度，太費力就猜慢一點，太輕鬆就猜快一點
+  let lo = 0.5, hi = 20;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (powerAt(mid) < POWER) lo = mid; else hi = mid;
+  }
+  return Math.min(lo * 3.6, 35); // 順風再強，旅行車也不太會超過 35 km/h
 }
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const mean = arr => arr.reduce((s, x) => s + x, 0) / arr.length;
 
 // 依分數給等級
 function level(score) {
@@ -324,54 +382,59 @@ function dateParts(dateStr) {
   return { md: `${m}/${d}`, weekday: `週${WEEKDAYS[wd]}`, weekend: wd === 0 || wd === 6 };
 }
 
-// =====================================================
-// 3. 評分：一個小時的天氣 → 0~100 分
-// =====================================================
-function scoreHour(w, heading) {
-  let score = 100;
+function nextDate(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const n = new Date(y, m - 1, d + 1);
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+}
 
-  // 下雨
-  const prob = w.rainProb ?? 0;
-  const mm = w.rain ?? 0;
-  const rainPenalty = prob * 0.35 + Math.min(mm, 4) * 15;
-  score -= rainPenalty;
-
-  // 風（順風加分、逆風扣分）
-  const along = tailwind(w.wind ?? 0, w.windDir ?? 0, heading);
-  let windAdj = along >= 0 ? Math.min(along, 20) * 0.5 : -Math.min(-along, 30) * 1.2;
-  if ((w.gust ?? 0) > 45) windAdj -= Math.min(w.gust - 45, 20);
-  score += windAdj;
-
-  // 氣溫（用體感溫度）
-  const t = w.feels ?? w.temp ?? 25;
-  let heatPenalty = 0;
-  if (t > 31) heatPenalty = Math.min((t - 31) * 5, 40);
-  if (t < 12) heatPenalty = Math.min((12 - t) * 3, 20);
-  score -= heatPenalty;
-
-  // 空氣品質（AQI）：騎車呼吸量大，空氣差要扣分。沒有空品預報的時候不扣
-  if (w.aqi != null) {
-    let airPenalty = 0;
-    if (w.aqi > 50) airPenalty = (Math.min(w.aqi, 100) - 50) * 0.2;           // 51–100：最多 −10
-    if (w.aqi > 100) airPenalty += (Math.min(w.aqi, 150) - 100) * 0.4;        // 101–150：再 −20
-    if (w.aqi > 150) airPenalty += Math.min((w.aqi - 150) * 0.3, 15);         // 150 以上：再最多 −15
-    score -= airPenalty;
-  }
-
-  return { score: clamp(score, 0, 100), along };
+// 小時數 → 「6 小時 05 分」
+function fmtHours(h) {
+  const total = Math.round(h * 60);
+  const hh = Math.floor(total / 60), mm = total % 60;
+  return hh ? `${hh} 小時 ${String(mm).padStart(2, "0")} 分` : `${mm} 分`;
 }
 
 // =====================================================
-// 4. 把 Open-Meteo 的資料整理成「某地點、某日期、某小時」查得到的樣子
+// 3. 評分
 // =====================================================
+
+// 一個小時裡「雨、熱、危險的風、空品」要扣幾分
+function hourPenalty(w, cross, useAir) {
+  // 危險的風：強側風、強陣風
+  let windDanger = 0;
+  if (Math.abs(cross) > 25) windDanger += Math.min(Math.abs(cross) - 25, 15);
+  if ((w.gust ?? 0) > 40) windDanger += Math.min((w.gust - 40) * 1.5, 25);
+
+  // 下雨
+  const rain = (w.rainProb ?? 0) * 0.35 + Math.min(w.rain ?? 0, 4) * 15;
+
+  // 氣溫（用體感溫度）
+  const t = w.feels ?? w.temp ?? 25;
+  let heat = 0;
+  if (t > 31) heat = Math.min((t - 31) * 5, 40);
+  if (t < 12) heat = Math.min((12 - t) * 3, 20);
+
+  // 空氣品質（有勾選、而且有預報才算）
+  let air = 0;
+  if (useAir && w.aqi != null) {
+    if (w.aqi > 50) air += (Math.min(w.aqi, 100) - 50) * 0.2;      // 51–100：最多 −10
+    if (w.aqi > 100) air += (Math.min(w.aqi, 150) - 100) * 0.4;    // 101–150：再 −20
+    if (w.aqi > 150) air += Math.min((w.aqi - 150) * 0.3, 15);     // 150 以上：再最多 −15
+  }
+
+  return windDanger + rain + heat + air;
+}
+
+// 把 Open-Meteo 的資料整理成「某地點、某時間」查得到的樣子
 function buildLookup(apiData, airData) {
   const list = Array.isArray(apiData) ? apiData : [apiData];
   const airList = airData ? (Array.isArray(airData) ? airData : [airData]) : [];
   return list.map((loc, li) => {
-    // 先把這個地點的空品整理成「時間 → 數值」
+    // 先把這個地點的空品整理成「時間 → AQI」
     const airByTime = new Map();
     const ah = airList[li]?.hourly;
-    if (ah) ah.time.forEach((time, i) => airByTime.set(time, { aqi: ah.us_aqi?.[i], pm25: ah.pm2_5?.[i] }));
+    if (ah) ah.time.forEach((time, i) => airByTime.set(time, ah.us_aqi?.[i] ?? null));
 
     const h = loc.hourly;
     const byTime = new Map();
@@ -384,75 +447,119 @@ function buildLookup(apiData, airData) {
         wind: h.wind_speed_10m[i],
         windDir: h.wind_direction_10m[i],
         gust: h.wind_gusts_10m[i],
-        aqi: airByTime.get(time)?.aqi ?? null,
-        pm25: airByTime.get(time)?.pm25 ?? null,
+        aqi: airByTime.get(time) ?? null,
       });
     });
     return byTime;
   });
 }
 
-// 算某一天（第 1 天或第 2 天）在某個日期騎的話，每小時的狀況
-function evaluateDay(lookup, dateStr, day) {
-  const hours = [];
+// 算某一天（第 1 天或第 2 天）在某個日期騎的話，每小時的狀況和這天的分數
+function evaluateDay(lookup, dateStr, day, useAir) {
   const totalHours = END_HOUR - START_HOUR;
+  const dayKm = day.endKm - day.startKm;
+  const chunkKm = dayKm / totalHours; // 每個小時大約負責的路段長度
+  const hours = [];
+
   for (let h = START_HOUR; h < END_HOUR; h++) {
     // 這個小時的中間點，大概騎到哪個里程
-    const progress = (h - START_HOUR + 0.5) / totalHours;
-    const km = day.startKm + progress * (day.endKm - day.startKm);
+    const km = day.startKm + (h - START_HOUR + 0.5) * chunkKm;
     const { pointIndex, heading } = whereAmI(km);
     const time = `${dateStr}T${String(h).padStart(2, "0")}:00`;
     const w = lookup[pointIndex].get(time);
     if (!w) return null; // 預報沒涵蓋到這天
-    const { score, along } = scoreHour(w, heading);
-    hours.push({ hour: h, km, place: ROUTE[pointIndex].name, w, score, along });
+    const { along, cross } = windParts(w.wind ?? 0, w.windDir ?? 0, heading);
+    const speed = riderSpeed(along);
+    const penalty = hourPenalty(w, cross, useAir);
+    hours.push({ hour: h, place: ROUTE[pointIndex].name, w, along, cross, speed, penalty });
   }
-  const avg = hours.reduce((s, x) => s + x.score, 0) / hours.length;
+
+  // 風的分數：用「純騎乘時間」跟無風比較
+  const rideTime = hours.reduce((s, x) => s + chunkKm / x.speed, 0);
+  const calmTime = dayKm / RIDER.calmKmh;
+  const savedPct = (calmTime - rideTime) / calmTime * 100;
+  const windScore = clamp(80 + savedPct, 0, 100);
+
+  // 整天最熱的時候超過 35°C，熱會累積，整天再額外扣分
   const maxFeels = Math.max(...hours.map(x => x.w.feels ?? x.w.temp ?? 0));
-  // 整天最熱的時候超過 35°C，熱會累積，整天再額外扣分（每 1 度扣 4 分，最多 20 分）
   const heatDayPenalty = Math.round(clamp((maxFeels - 35) * 4, 0, 20));
+
+  const avgPenalty = mean(hours.map(x => x.penalty));
+  const aqis = hours.map(x => x.w.aqi).filter(v => v != null);
+
   return {
     hours,
-    score: Math.round(clamp(avg - heatDayPenalty, 0, 100)),
+    score: Math.round(clamp(windScore - avgPenalty - heatDayPenalty, 0, 100)),
+    windScore: Math.round(windScore),
+    avgPenalty,
     heatDayPenalty,
+    rideTime,
+    calmTime,
+    avgAlong: mean(hours.map(x => x.along)),
+    avgCross: mean(hours.map(x => x.cross)),
+    maxGust: Math.max(...hours.map(x => x.w.gust ?? 0)),
     maxRainProb: Math.max(...hours.map(x => x.w.rainProb ?? 0)),
-    totalRain: hours.reduce((s, x) => s + (x.w.rain ?? 0), 0),
-    avgAlong: hours.reduce((s, x) => s + x.along, 0) / hours.length,
     maxFeels,
-    // 沒有任何一小時有空品預報的話是 null
-    maxAqi: hours.some(x => x.w.aqi != null) ? Math.max(...hours.filter(x => x.w.aqi != null).map(x => x.w.aqi)) : null,
+    maxAqi: useAir && aqis.length ? Math.max(...aqis) : null,
   };
 }
 
 // 列出所有可以出發的日期（明天起，而且隔天也要有預報）
-function evaluateAll(apiData, airData) {
-  const lookup = buildLookup(apiData, airData);
+function evaluateAll(apiData, airData, useAir) {
+  const lookup = buildLookup(apiData, useAir ? airData : null);
   const first = Array.isArray(apiData) ? apiData[0] : apiData;
   const dates = [...new Set(first.hourly.time.map(t => t.slice(0, 10)))];
 
   const trips = [];
   for (let i = 1; i < dates.length - 1; i++) {
-    const d1 = evaluateDay(lookup, dates[i], DAYS[0]);
-    const d2 = evaluateDay(lookup, dates[i + 1], DAYS[1]);
+    const d1 = evaluateDay(lookup, dates[i], DAYS[0], useAir);
+    const d2 = evaluateDay(lookup, dates[i + 1], DAYS[1], useAir);
     if (!d1 || !d2) continue;
     trips.push({
       date: dates[i],
       daysAhead: i,
       days: [d1, d2],
-      // 兩天裡比較差的那天佔 2/3，避免「一天很好、一天大雨」被平均掉
+      // 兩天裡比較差的那天佔 2/3，避免「一天很好、一天很糟」被平均掉
       score: Math.round((2 * Math.min(d1.score, d2.score) + Math.max(d1.score, d2.score)) / 3),
+      rideTime: d1.rideTime + d2.rideTime,
+      calmTime: d1.calmTime + d2.calmTime,
     });
   }
   return trips;
 }
 
 // =====================================================
-// 5. 畫面
+// 4. 畫面
 // =====================================================
-function windText(along) {
-  const v = Math.round(Math.abs(along));
-  if (v < 3) return "幾乎無風";
-  return along > 0 ? `順風 ${v}` : `逆風 ${v}`;
+
+// 風相對於前進方向的箭頭：箭頭往上 = 風往你前進的方向吹（順風）
+function windKind(along, cross) {
+  const speed = Math.hypot(along, cross);
+  if (speed < 3) return { text: "幾乎無風", cls: "", deg: 0, calm: true };
+  const deg = Math.atan2(cross, along) * 180 / Math.PI; // 0 = 正順風，180 = 正逆風
+  if (Math.abs(deg) <= 60) return { text: "順風", cls: "lv-good", deg };
+  if (Math.abs(deg) >= 120) return { text: "逆風", cls: "lv-bad", deg };
+  return { text: "側風", cls: "lv-warn", deg };
+}
+
+function arrowSVG(along, cross, size = 18) {
+  const k = windKind(along, cross);
+  if (k.calm) return `<span class="arrow calm" title="幾乎無風">·</span>`;
+  return `<svg class="arrow ${k.cls}" width="${size}" height="${size}" viewBox="0 0 20 20" style="transform:rotate(${k.deg.toFixed(0)}deg)" aria-label="${k.text}" role="img"><path d="M10 1.5 L17 10 H12.5 V18.5 H7.5 V10 H3 Z" fill="currentColor"/></svg>`;
+}
+
+function windText(along, cross) {
+  const k = windKind(along, cross);
+  return k.calm ? k.text : `${k.text} ${Math.round(Math.hypot(along, cross))}`;
+}
+
+// 「比無風省 45 分」或「比無風多 1 小時 10 分」
+function timeDiffHTML(rideTime, calmTime) {
+  const diff = calmTime - rideTime;
+  if (Math.abs(diff) < 5 / 60) return `<span class="muted">跟無風差不多</span>`;
+  return diff > 0
+    ? `<b class="lv-good">省 ${fmtHours(diff)}</b>`
+    : `<b class="lv-bad">多 ${fmtHours(-diff)}</b>`;
 }
 
 // AQI 等級（跟環境部空氣品質指標的分級一樣）
@@ -463,10 +570,10 @@ function aqiLevel(aqi) {
   return { cls: "lv-bad", text: "不健康" };
 }
 
-function aqiChip(aqi) {
+function aqiChip(aqi, useAir) {
+  if (!useAir) return "";
   if (aqi == null) return `<span>空品無預報</span>`;
-  const a = aqiLevel(aqi);
-  return `<span>AQI <b class="num ${a.cls}">${Math.round(aqi)}</b></span>`;
+  return `<span>AQI <b class="num ${aqiLevel(aqi).cls}">${Math.round(aqi)}</b></span>`;
 }
 
 function confidence(daysAhead) {
@@ -475,20 +582,12 @@ function confidence(daysAhead) {
   return "僅供參考";
 }
 
-function daySummaryHTML(day) {
-  return `
-    <span>雨 <b class="num">${Math.round(day.maxRainProb)}%</b></span>
-    <span><b>${windText(day.avgAlong)}</b>${Math.abs(day.avgAlong) >= 3 ? " km/h" : ""}</span>
-    <span>體感最高 <b class="num">${Math.round(day.maxFeels)}°</b></span>
-    ${aqiChip(day.maxAqi)}`;
-}
-
-function renderBest(trips) {
+function renderBest(trips, useAir) {
   const box = document.getElementById("best");
-  // 優先挑 8 天內（預報比較準）、而且兩天都有空品預報的最高分
-  // （沒有空品預報的日子不會被扣空品分，直接比較會不公平）
+  // 優先挑 8 天內（預報比較準）的最高分
+  // 有算空品的話，再優先挑兩天都有空品預報的（沒有空品預報的日子沒被扣空品分，直接比會不公平）
   const near = trips.filter(t => t.daysAhead <= 7);
-  const full = near.filter(t => t.days.every(d => d.maxAqi != null));
+  const full = useAir ? near.filter(t => t.days.every(d => d.maxAqi != null)) : [];
   const pool = full.length ? full : near.length ? near : trips;
   const eyebrow = full.length ? "最近幾天（有空品預報）最推薦的出發日" : "未來一週最推薦的出發日";
   const best = pool.reduce((a, b) => (b.score > a.score ? b : a));
@@ -512,44 +611,63 @@ function renderBest(trips) {
         ${best.days.map((d, i) => `
           <div class="day-box">
             <h3><span>${DAYS[i].label}：${DAYS[i].from} → ${DAYS[i].to}</span><span class="num ${level(d.score).cls}">${d.score}</span></h3>
-            <div class="chips">${daySummaryHTML(d)}</div>
+            <div class="windline">
+              ${arrowSVG(d.avgAlong, d.avgCross, 22)}
+              <span class="w-main">${windText(d.avgAlong, d.avgCross)}${windKind(d.avgAlong, d.avgCross).calm ? "" : " km/h"}</span>
+              <span class="w-time">純騎乘約 ${fmtHours(d.rideTime)}・${timeDiffHTML(d.rideTime, d.calmTime)}</span>
+            </div>
+            <div class="chips">
+              <span>陣風 <b class="num">${Math.round(d.maxGust)}</b></span>
+              <span>雨 <b class="num">${Math.round(d.maxRainProb)}%</b></span>
+              <span>體感最高 <b class="num">${Math.round(d.maxFeels)}°</b></span>
+              ${aqiChip(d.maxAqi, useAir)}
+            </div>
           </div>`).join("")}
       </div>
     </div>`;
   return best;
 }
 
-function hourTableHTML(day) {
+function hourTableHTML(day, useAir) {
   const rows = day.hours.map(x => `
     <tr>
       <td class="num">${String(x.hour).padStart(2, "0")}:00</td>
       <td>${x.place}</td>
+      <td>${arrowSVG(x.along, x.cross, 14)} ${windText(x.along, x.cross)}</td>
+      <td class="num">${Math.round(x.w.gust ?? 0)}</td>
+      <td class="num">${x.speed.toFixed(1)}</td>
       <td class="num">${Math.round(x.w.rainProb ?? 0)}%</td>
       <td class="num">${(x.w.rain ?? 0).toFixed(1)}</td>
-      <td>${windText(x.along)}</td>
-      <td class="num">${Math.round(x.w.gust ?? 0)}</td>
       <td class="num">${Math.round(x.w.feels ?? x.w.temp)}°</td>
-      <td class="num ${x.w.aqi != null ? aqiLevel(x.w.aqi).cls : ""}">${x.w.aqi != null ? Math.round(x.w.aqi) : "—"}</td>
-      <td class="num ${level(x.score).cls}">${Math.round(x.score)}</td>
+      ${useAir ? `<td class="num ${x.w.aqi != null ? aqiLevel(x.w.aqi).cls : ""}">${x.w.aqi != null ? Math.round(x.w.aqi) : "—"}</td>` : ""}
+      <td class="num">${x.penalty >= 0.5 ? "−" + Math.round(x.penalty) : "0"}</td>
     </tr>`).join("");
   return `
     <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>時間</th><th>大約位置</th><th>降雨機率</th><th>雨量 mm</th>
-          <th>風 km/h</th><th>陣風</th><th>體感</th><th>AQI</th><th>分數</th>
+          <th>時間</th><th>大約位置</th><th>風 km/h</th><th>陣風</th><th>預估時速</th>
+          <th>降雨機率</th><th>雨量 mm</th><th>體感</th>${useAir ? "<th>AQI</th>" : ""}<th>扣分</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
 }
 
-function renderTrips(trips, best) {
+function dayBreakdownHTML(d) {
+  const parts = [`風 ${d.windScore}`];
+  if (d.avgPenalty >= 0.5) parts.push(`雨熱等 −${Math.round(d.avgPenalty)}`);
+  if (d.heatDayPenalty) parts.push(`整天高溫 −${d.heatDayPenalty}`);
+  return `<span class="small muted" style="font-weight:400">（${parts.join("、")}）</span>`;
+}
+
+function renderTrips(trips, best, useAir) {
   const box = document.getElementById("trips");
   box.innerHTML = trips.map(t => {
     const lv = level(t.score);
     const p = dateParts(t.date);
-    const worst = Math.min(t.days[0].score, t.days[1].score);
+    const [d1, d2] = t.days;
+    const anyAqi = d1.maxAqi != null || d2.maxAqi != null;
     return `
       <details class="trip ${t === best ? "is-best" : ""}">
         <summary>
@@ -560,11 +678,12 @@ function renderTrips(trips, best) {
           <div class="t-mid">
             <div class="bar ${lv.cls}"><div style="width:${t.score}%"></div></div>
             <div class="chips">
-              <span>雨 <b class="num">${Math.round(Math.max(t.days[0].maxRainProb, t.days[1].maxRainProb))}%</b></span>
-              <span><b>${windText((t.days[0].avgAlong + t.days[1].avgAlong) / 2)}</b></span>
-              <span>體感 <b class="num">${Math.round(Math.max(t.days[0].maxFeels, t.days[1].maxFeels))}°</b></span>
-              ${aqiChip(t.days[0].maxAqi == null && t.days[1].maxAqi == null ? null : Math.max(t.days[0].maxAqi ?? 0, t.days[1].maxAqi ?? 0))}
-              <span>較差那天 <b class="num">${worst}</b></span>
+              <span class="lead arrows" title="第 1 天、第 2 天的平均風向">${arrowSVG(d1.avgAlong, d1.avgCross)}${arrowSVG(d2.avgAlong, d2.avgCross)}</span>
+              <span class="lead">${timeDiffHTML(t.rideTime, t.calmTime)}</span>
+              <span>陣風 <b class="num">${Math.round(Math.max(d1.maxGust, d2.maxGust))}</b></span>
+              <span>雨 <b class="num">${Math.round(Math.max(d1.maxRainProb, d2.maxRainProb))}%</b></span>
+              <span>體感 <b class="num">${Math.round(Math.max(d1.maxFeels, d2.maxFeels))}°</b></span>
+              ${aqiChip(anyAqi ? Math.max(d1.maxAqi ?? 0, d2.maxAqi ?? 0) : null, useAir)}
             </div>
           </div>
           <div class="t-score">
@@ -575,29 +694,44 @@ function renderTrips(trips, best) {
         <div class="detail">
           ${t.days.map((d, i) => `
             <div style="display:grid;gap:8px">
-              <h3>${DAYS[i].label}（${dateParts(i === 0 ? t.date : nextDate(t.date)).md}）${DAYS[i].from} → ${DAYS[i].to}　<span class="num ${level(d.score).cls}">${d.score} 分</span>${d.heatDayPenalty ? `<span class="small muted" style="font-weight:400">（含整天高溫 −${d.heatDayPenalty}）</span>` : ""}</h3>
-              ${hourTableHTML(d)}
+              <h3>${DAYS[i].label}（${dateParts(i === 0 ? t.date : nextDate(t.date)).md}）${DAYS[i].from} → ${DAYS[i].to}　<span class="num ${level(d.score).cls}">${d.score} 分</span>${dayBreakdownHTML(d)}</h3>
+              <p class="small muted">純騎乘約 ${fmtHours(d.rideTime)}（無風約 ${fmtHours(d.calmTime)}）</p>
+              ${hourTableHTML(d, useAir)}
             </div>`).join("")}
         </div>
       </details>`;
   }).join("");
 }
 
-function nextDate(dateStr) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const n = new Date(y, m - 1, d + 1);
-  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+function renderLegend() {
+  document.getElementById("legend").innerHTML = `
+    <span>箭頭是風相對你前進方向吹的方向：</span>
+    <span>${arrowSVG(10, 0, 14)}順風</span>
+    <span>${arrowSVG(0, 10, 14)}側風</span>
+    <span>${arrowSVG(-10, 0, 14)}逆風</span>
+    <span>（兩個箭頭 = 第 1 天、第 2 天）</span>`;
 }
 
-function render(apiData, airData, fetchedAt, failReason) {
-  const trips = evaluateAll(apiData, airData);
+// 最後一次拿到的資料，切換「空氣品質」勾選時直接重算，不用重新抓
+const state = { data: null, air: null, fetchedAt: 0, failReason: null };
+
+function useAirChecked() {
+  return document.getElementById("use-air").checked;
+}
+
+function render() {
+  const useAir = useAirChecked();
+  const trips = evaluateAll(state.data, state.air, useAir);
   if (!trips.length) throw new Error("預報資料裡找不到可以評分的日期");
-  const best = renderBest(trips);
-  renderTrips(trips, best);
-  const time = new Date(fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  document.getElementById("status").textContent = failReason
-    ? `這次沒抓到新預報：${failReason}。先顯示 ${time} 存下來的預報。`
-    : `預報更新時間：${time}${airData ? "" : "（這次沒抓到空氣品質，先不算空品）"}`;
+  const best = renderBest(trips, useAir);
+  renderLegend();
+  renderTrips(trips, best, useAir);
+
+  const time = new Date(state.fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const airNote = useAir && !state.air ? "（這次沒抓到空氣品質，先不算空品）" : "";
+  document.getElementById("status").textContent = state.failReason
+    ? `這次沒抓到新預報：${state.failReason}。先顯示 ${time} 存下來的預報。${airNote}`
+    : `預報更新時間：${time}${airNote}`;
 }
 
 function showError(message) {
@@ -606,13 +740,15 @@ function showError(message) {
       <p><b>抓不到天氣預報</b></p>
       <p class="small">${message}。過一下再按「重新整理」試試看。</p>
     </div>`;
+  document.getElementById("legend").innerHTML = "";
   document.getElementById("trips").innerHTML = "";
   document.getElementById("status").textContent = "沒有資料";
 }
 
 // =====================================================
-// 6. 抓資料：一次把 11 個檢查點的預報都要回來
+// 5. 抓資料：一次把 11 個檢查點的預報都要回來
 // =====================================================
+
 // 向某個網址要 JSON 資料；失敗時丟出看得懂的中文錯誤
 async function fetchJSON(url, serviceName) {
   // 超過 20 秒沒回應就放棄
@@ -637,8 +773,7 @@ async function fetchJSON(url, serviceName) {
 }
 
 async function load() {
-  const status = document.getElementById("status");
-  status.textContent = "正在抓取天氣和空氣品質預報…";
+  document.getElementById("status").textContent = "正在抓取天氣預報…";
   document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
 
   const where = {
@@ -652,32 +787,37 @@ async function load() {
     forecast_days: "16",
     wind_speed_unit: "kmh",
   });
-  const airParams = new URLSearchParams({
-    ...where,
-    hourly: "us_aqi,pm2_5",
-    forecast_days: "7",
-  });
+  const airParams = new URLSearchParams({ ...where, hourly: "us_aqi", forecast_days: "7" });
 
   try {
-    // 天氣和空氣品質同時去抓。空氣品質抓不到也沒關係，只是少算那一項
+    // 天氣和空氣品質同時去抓。空氣品質抓不到也沒關係，只是不能算那一項
     const [data, air] = await Promise.all([
       fetchJSON("https://api.open-meteo.com/v1/forecast?" + weatherParams, "天氣服務"),
       fetchJSON("https://air-quality-api.open-meteo.com/v1/air-quality?" + airParams, "空氣品質服務").catch(() => null),
     ]);
-    const fetchedAt = Date.now();
-    render(data, air, fetchedAt, null);
+    Object.assign(state, { data, air, fetchedAt: Date.now(), failReason: null });
+    render();
     // 存一份在瀏覽器裡，下次沒網路時還能看
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt, data, air })); } catch (e) {}
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: state.fetchedAt, data, air })); } catch (e) {}
   } catch (err) {
     // 抓失敗的話，試著用上次存下來的資料
     let cached = null;
     try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) {}
     if (cached) {
-      try { render(cached.data, cached.air ?? null, cached.fetchedAt, err.message || "發生錯誤"); return; } catch (e) {}
+      Object.assign(state, { data: cached.data, air: cached.air ?? null, fetchedAt: cached.fetchedAt, failReason: err.message || "發生錯誤" });
+      try { render(); return; } catch (e) {}
     }
     showError(err.message || "發生錯誤");
   }
 }
+
+// 「空氣品質也算進分數」的勾選：記在瀏覽器裡，切換時直接重算
+const airBox = document.getElementById("use-air");
+try { airBox.checked = localStorage.getItem(AIR_PREF_KEY) === "1"; } catch (e) {}
+airBox.addEventListener("change", () => {
+  try { localStorage.setItem(AIR_PREF_KEY, airBox.checked ? "1" : "0"); } catch (e) {}
+  if (state.data) render();
+});
 
 document.getElementById("reload").addEventListener("click", load);
 load();
