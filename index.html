@@ -320,7 +320,7 @@ td.num { font-size: 0.95rem; }
       <li><b>路線</b>：用 TBA 一日北高 360 的 GPX，從新竹南寮漁港附近截到高雄左營，約 <span id="total-km">293</span> km，走西部沿海。沿路每 20 km 設一個天氣檢查點。</li>
       <li><b>一日</b>：一天騎完。<b>兩日</b>：第 1 天騎到大城附近（約 137 km）過夜。</li>
       <li><b>出發時間</b>：預設「自動」。一日會試 03:00～07:00、兩日每天試 05:00～08:00，每半小時試一次，選分數最高的時間（分數一樣就選最接近一日 05:00、兩日 06:00 的）。也可以在上面的選單自己指定。</li>
-      <li><b>預報可信度</b>：另外抓「系集預報」（ECMWF 的 51 種預測，最遠約 15 天；抓不到時改用 GFS 的 31 種），每一種都跑一次模擬騎乘。「順風機率」是其中風讓你比無風更快的比例；「預測一致／普通／分歧」看各預測算出來的騎乘時間差多少。可信度不影響分數，只是幫你判斷這個分數能信幾成。</li>
+      <li><b>預報可信度</b>：另外抓「系集預報」（ECMWF 的 51 種預測，只看 10 天；抓不到時改用 GFS 的 31 種），每一種都跑一次模擬騎乘。「順風機率」是其中風讓你比無風更快的比例；「預測一致／普通／分歧」看各預測算出來的騎乘時間差多少。可信度不影響分數，只是幫你判斷這個分數能信幾成。</li>
       <li><b>模擬騎乘</b>：從出發時間開始，每 1 公里用「那個位置、那個時間」的風，算出用同樣的力氣能騎多快，一路累積出到達每個地點的時間。每騎 1 小時休息 10 分鐘也算進去。</li>
       <li><b>風是主要考量</b>：力氣用「無風時速」來設定（上面的選單，以輕裝公路車計算）。風的分數：無風是 80 分，比無風每省 1% 的騎乘時間加 1 分（最高 100），每多花 1% 扣 1 分。</li>
       <li>天氣預報的風速是離地 10 公尺的風，騎車的高度風比較小，所以用 70% 來計算。畫面上顯示的風速還是預報原本的數字。</li>
@@ -329,6 +329,7 @@ td.num { font-size: 0.95rem; }
       <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。<b>氣溫</b>：體感超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。一天最熱超過 35°C，再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
       <li><b>空氣品質（選用）</b>：勾選後才算。AQI 51–100 每多 1 扣 0.2 分，101–150 每多 1 扣 0.4 分，150 以上再加扣，最多 −45。空品預報只有大約 5 天。</li>
       <li><b>合起來</b>：一天的分數 = 風的分數 − 雨、熱、危險風（和空品）扣分的平均 − 整天高溫 − 摸黑。兩日的話，比較差的那天佔 2/3。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
+      <li><b>省用量</b>：Open-Meteo 免費版有使用次數上限，所以 1 小時內重新打開網頁會直接用存下來的預報，系集預報則是 3 小時。要最新的請按「重新整理」。</li>
       <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>，地圖來自 OpenStreetMap。預報越遠越不準，8 天以後只能當參考。一日 290 km 會長時間跟大車同路又有夜騎，前後燈、反光背心和補給點請自己準備好。</li>
     </ul>
   </section>
@@ -393,7 +394,7 @@ const RIDER = {
 const WIND_HEIGHT_FACTOR = 0.7; // 預報是 10 公尺高的風，騎車高度的風大約只有 70%
 
 const CACHE_KEY = "bike-south-forecast-v2";
-const ENS_CACHE_KEY = "bike-south-ensemble-v1";
+const ENS_CACHE_KEY = "bike-south-ensemble-v2";
 const PREF_KEY = "bike-south-prefs";
 
 // =====================================================
@@ -841,9 +842,10 @@ function confChip(c) {
 function confSentence(t) {
   const c = t.conf;
   if (!c) {
-    return state.ens
-      ? "這天太遠，系集預報還沒涵蓋到，沒辦法評估可信度。"
-      : "這次沒抓到系集預報，沒辦法評估可信度。";
+    if (state.ens) return "這天太遠，系集預報只有 10 天，沒辦法評估可信度。";
+    if (state.ensStatus === "loading") return "正在抓取系集預報…";
+    if (state.ensStatus === "limited") return "系集預報暫時被限制使用次數，過一陣子再按「重新整理」。";
+    return "這次沒抓到系集預報，沒辦法評估可信度。";
   }
   const favorable = Math.round(c.tailProb * c.n);
   return `${c.n} 種預測裡，有 <b>${favorable} 種</b>的風讓你比無風更快（順風機率 <b>${Math.round(c.tailProb * 100)}%</b>）。` +
@@ -1137,7 +1139,7 @@ function selectTrip(date) {
 // =====================================================
 // 9. 狀態、設定、整體繪製
 // =====================================================
-const state = { data: null, air: null, ens: null, fetchedAt: 0, failReason: null, trips: [], dates: [], selected: null };
+const state = { data: null, air: null, ens: null, ensStatus: "loading", fetchedAt: 0, failReason: null, fromCache: false, trips: [], dates: [], selected: null };
 const prefs = { mode: 1, calm: 25, useAir: false, start: { 1: "auto", 2: "auto" } };
 
 function loadPrefs() {
@@ -1182,11 +1184,17 @@ function render() {
   selectTrip(trips.some(t => t.date === state.selected) ? state.selected : best.date);
 
   const time = new Date(state.fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  const airNote = (prefs.useAir && !state.air ? "（這次沒抓到空氣品質，先不算空品）" : "") +
-    (state.ens ? "" : "（這次沒抓到系集預報，先不顯示可信度）");
-  document.getElementById("status").textContent = state.failReason
-    ? `這次沒抓到新預報：${state.failReason}。先顯示 ${time} 存下來的預報。${airNote}`
-    : `預報更新時間：${time}${airNote}`;
+  const notes = [];
+  if (prefs.useAir && !state.air) notes.push("這次沒抓到空氣品質，先不算空品");
+  if (state.ensStatus === "loading") notes.push("正在抓取系集預報…");
+  if (state.ensStatus === "limited") notes.push(state.ens ? "系集預報暫時被限制使用次數，先用上次的" : "系集預報暫時被限制使用次數，先不顯示可信度");
+  if (state.ensStatus === "fail") notes.push(state.ens ? "系集預報沒更新到，先用上次的" : "這次沒抓到系集預報，先不顯示可信度");
+  const head = state.failReason
+    ? `這次沒抓到新預報：${state.failReason}。先顯示 ${time} 存下來的預報。`
+    : state.fromCache
+      ? `預報更新時間：${time}（1 小時內抓過，先用存下來的；要最新的請按「重新整理」）`
+      : `預報更新時間：${time}`;
+  document.getElementById("status").textContent = head + notes.map(n => `（${n}）`).join("");
 }
 
 function showError(message) {
@@ -1270,60 +1278,94 @@ async function fetchByGroups(baseUrl, extra, serviceName, points = CHECKPOINTS, 
   return results.flat();
 }
 
-// 系集預報：先試歐洲 ECMWF（51 種預測、15 天），不行再試美國 GFS（31 種預測）
-// 資料量比較大，所以一個地點抓一次
+// 1 小時內抓過的預報，重新打開網頁時直接用，不再抓（Open-Meteo 免費版有使用次數上限）
+const FRESH_MS = 60 * 60 * 1000;
+// 系集預報本來就好幾個小時才更新一次，3 小時內抓過就不再抓
+const ENS_FRESH_MS = 3 * 60 * 60 * 1000;
+
+function readCache(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+}
+function writeCache(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+}
+
+// 系集預報：先試歐洲 ECMWF（51 種預測），不行再試美國 GFS（31 種預測）
+// 只抓 10 天（更遠的預報本來就只能參考），而且一個地點抓一次，資料比較小
 async function fetchEnsemble() {
   const points = ENS_CPS.map(i => CHECKPOINTS[i]);
-  for (const [model, days] of [["ecmwf_ifs025", "15"], ["gfs_seamless", "16"]]) {
+  let lastErr = null;
+  for (const model of ["ecmwf_ifs025", "gfs_seamless"]) {
     try {
       const list = await fetchByGroups("https://ensemble-api.open-meteo.com/v1/ensemble", {
-        hourly: "wind_speed_10m,wind_direction_10m", models: model, forecast_days: days, wind_speed_unit: "kmh",
+        hourly: "wind_speed_10m,wind_direction_10m", models: model, forecast_days: "10", wind_speed_unit: "kmh",
       }, "系集預報服務", points, 1);
       if (list.length === points.length) return { model, list };
     } catch (e) {
+      lastErr = e;
       console.warn(`系集預報 ${model} 抓取失敗：`, e.message);
+      if (e.message.includes("限制使用次數")) break; // 被限制了，換模型也一樣，不要浪費次數
     }
   }
-  return null;
+  throw lastErr || new Error("系集預報資料不完整");
 }
 
-async function load() {
-  document.getElementById("status").textContent = "正在抓取天氣預報…";
-  document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
+// force = true：使用者按了「重新整理」，不管存下來的資料多新都重抓天氣
+async function load(force = false) {
+  const cached = readCache(CACHE_KEY);
+  const ensCached = readCache(ENS_CACHE_KEY);
+  if (ensCached?.ens) state.ens = ensCached.ens;
+  state.ensStatus = ensCached?.ens && Date.now() - ensCached.fetchedAt < ENS_FRESH_MS ? "ok" : "loading";
 
-  const weatherParams = {
-    hourly: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
-    daily: "sunrise,sunset",
-    forecast_days: "16",
-    wind_speed_unit: "kmh",
-  };
-  const airParams = { hourly: "us_aqi", forecast_days: "7" };
-
-  try {
-    // 天氣和空氣品質同時去抓。空氣品質抓不到也沒關係，只是不能算那一項
-    // 系集預報抓不到也沒關係，只是不顯示可信度
-    const [data, air, ens] = await Promise.all([
-      fetchByGroups("https://api.open-meteo.com/v1/forecast", weatherParams, "天氣服務"),
-      fetchByGroups("https://air-quality-api.open-meteo.com/v1/air-quality", airParams, "空氣品質服務").catch(() => null),
-      fetchEnsemble().catch(() => null),
-    ]);
-    Object.assign(state, { data, air, ens, fetchedAt: Date.now(), failReason: null });
-    render();
-    // 存一份在瀏覽器裡，下次沒網路時還能看（系集預報比較大，分開存）
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: state.fetchedAt, data, air })); } catch (e) {}
-    try { localStorage.setItem(ENS_CACHE_KEY, JSON.stringify(ens)); } catch (e) {}
-  } catch (err) {
-    // 抓失敗的話，試著用上次存下來的資料
-    let cached = null;
-    try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) {}
-    if (cached) {
-      let ens = null;
-      try { ens = JSON.parse(localStorage.getItem(ENS_CACHE_KEY)); } catch (e) {}
-      Object.assign(state, { data: cached.data, air: cached.air ?? null, ens, fetchedAt: cached.fetchedAt, failReason: err.message || "發生錯誤" });
-      try { render(); return; } catch (e) {}
-    }
-    showError(err.message || "發生錯誤");
+  // ---- 第 1 步：天氣和空氣品質（先顯示出來）----
+  const fresh = cached?.data && Date.now() - cached.fetchedAt < FRESH_MS;
+  let shown = false;
+  if (!force && fresh) {
+    Object.assign(state, { data: cached.data, air: cached.air ?? null, fetchedAt: cached.fetchedAt, failReason: null, fromCache: true });
+    try { render(); shown = true; } catch (e) { console.warn("存下來的預報不能用：", e.message); }
   }
+  if (!shown) {
+    document.getElementById("status").textContent = "正在抓取天氣預報…";
+    if (!state.data) document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
+    const weatherParams = {
+      hourly: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+      daily: "sunrise,sunset",
+      forecast_days: "16",
+      wind_speed_unit: "kmh",
+    };
+    const airParams = { hourly: "us_aqi", forecast_days: "7" };
+    try {
+      // 空氣品質抓不到也沒關係，只是不能算那一項
+      const [data, air] = await Promise.all([
+        fetchByGroups("https://api.open-meteo.com/v1/forecast", weatherParams, "天氣服務"),
+        fetchByGroups("https://air-quality-api.open-meteo.com/v1/air-quality", airParams, "空氣品質服務").catch(() => null),
+      ]);
+      Object.assign(state, { data, air, fetchedAt: Date.now(), failReason: null, fromCache: false });
+      render();
+      // 存一份在瀏覽器裡，下次打開或沒網路時用
+      writeCache(CACHE_KEY, { fetchedAt: state.fetchedAt, data, air });
+    } catch (err) {
+      // 抓失敗的話，改用上次存下來的資料
+      if (cached?.data) {
+        Object.assign(state, { data: cached.data, air: cached.air ?? null, fetchedAt: cached.fetchedAt, failReason: err.message || "發生錯誤", fromCache: true });
+        try { render(); } catch (e) { showError(err.message || "發生錯誤"); return; }
+      } else {
+        showError(err.message || "發生錯誤");
+        return;
+      }
+    }
+  }
+
+  // ---- 第 2 步：系集預報（抓到之後再補上可信度）----
+  if (state.ensStatus === "ok") return;
+  try {
+    const ens = await fetchEnsemble();
+    Object.assign(state, { ens, ensStatus: "ok" });
+    writeCache(ENS_CACHE_KEY, { fetchedAt: Date.now(), ens });
+  } catch (e) {
+    state.ensStatus = e.message.includes("限制使用次數") ? "limited" : "fail";
+  }
+  if (state.data) render();
 }
 
 // 設定變更時直接重算，不用重新抓資料
@@ -1340,7 +1382,7 @@ document.getElementById("start").addEventListener("change", e => {
   prefs.start[prefs.mode] = e.target.value === "auto" ? "auto" : Number(e.target.value);
   onPrefsChange();
 });
-document.getElementById("reload").addEventListener("click", load);
+document.getElementById("reload").addEventListener("click", () => load(true));
 
 document.getElementById("total-km").textContent = Math.round(TOTAL_KM);
 loadPrefs();
