@@ -166,6 +166,11 @@ button:focus-visible, summary:focus-visible, select:focus-visible, input:focus-v
 }
 .leaflet-tooltip.map-label::before { display: none; }
 .leaflet-container { font-family: var(--font-body); background: var(--bg); }
+/* 深色模式：把 OpenStreetMap 的淺色底圖調成深色 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
+}
+:root[data-theme="dark"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); }
 
 /* ---------- 每個出發日的列表 ---------- */
 .list { display: grid; gap: 8px; }
@@ -316,7 +321,7 @@ td.num { font-size: 0.95rem; }
       <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。<b>氣溫</b>：體感超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。一天最熱超過 35°C，再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
       <li><b>空氣品質（選用）</b>：勾選後才算。AQI 51–100 每多 1 扣 0.2 分，101–150 每多 1 扣 0.4 分，150 以上再加扣，最多 −45。空品預報只有大約 5 天。</li>
       <li><b>合起來</b>：一天的分數 = 風的分數 − 雨、熱、危險風（和空品）扣分的平均 − 整天高溫 − 摸黑。兩日的話，比較差的那天佔 2/3。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
-      <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>，地圖來自 OpenStreetMap 和 CARTO。預報越遠越不準，8 天以後只能當參考。一日 290 km 會長時間跟大車同路又有夜騎，前後燈、反光背心和補給點請自己準備好。</li>
+      <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>，地圖來自 OpenStreetMap。預報越遠越不準，8 天以後只能當參考。一日 290 km 會長時間跟大車同路又有夜騎，前後燈、反光背心和補給點請自己準備好。</li>
     </ul>
   </section>
 
@@ -874,11 +879,9 @@ function initMap() {
     return;
   }
   map = L.map(box, { scrollWheelZoom: false, attributionControl: true, zoomSnap: 0.25 });
-  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, {
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18,
-    subdomains: "abcd",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> 貢獻者',
   }).addTo(map);
   routeLayer = L.layerGroup().addTo(map);
   map.fitBounds(L.latLngBounds(ROUTE_PTS), { padding: [16, 16] });
@@ -1029,35 +1032,72 @@ async function fetchJSON(url, serviceName) {
     if (res.status === 429) throw new Error(`${serviceName}暫時限制使用次數，請過幾分鐘再試`);
     if (res.status >= 500) throw new Error(`${serviceName}暫時故障（錯誤碼 ${res.status}）`);
     if (!res.ok) throw new Error(`${serviceName}不接受這次的查詢（錯誤碼 ${res.status}）`);
-    return await res.json();
+    return parseJSONLoose(await res.text(), serviceName);
   } finally {
     clearTimeout(timer);
   }
+}
+
+// 把文字轉成資料。如果資料裡混進 nan、inf 這種 JSON 不認得的值，先換成 null 再試一次
+function parseJSONLoose(text, serviceName) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    try {
+      return JSON.parse(text.replace(/-?\b(nan|NaN|inf|Infinity)\b/g, "null"));
+    } catch (e2) {
+      const m = /position (\d+)/.exec(e2.message);
+      const pos = m ? Number(m[1]) : 0;
+      console.warn(`${serviceName}資料格式錯誤，第 ${pos} 字附近：`, text.slice(Math.max(0, pos - 80), pos + 80));
+      const near = text.slice(Math.max(0, pos - 20), pos + 20).replace(/\s+/g, " ");
+      throw new Error(`${serviceName}回傳的資料格式有問題（共 ${text.length} 字，第 ${pos} 字附近：「${near}」）`);
+    }
+  }
+}
+
+// 檢查點分成每 4 個一組去抓，資料量比較小；某一組失敗會自動再試一次
+async function fetchByGroups(baseUrl, extra, serviceName) {
+  const groups = [];
+  for (let i = 0; i < CHECKPOINTS.length; i += 4) groups.push(CHECKPOINTS.slice(i, i + 4));
+  const results = await Promise.all(groups.map(async group => {
+    const params = new URLSearchParams({
+      latitude: group.map(c => c.pos[0].toFixed(4)).join(","),
+      longitude: group.map(c => c.pos[1].toFixed(4)).join(","),
+      timezone: "Asia/Taipei",
+      ...extra,
+    });
+    let lastErr;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetchJSON(baseUrl + "?" + params, serviceName);
+        return Array.isArray(r) ? r : [r]; // 只有一個地點時，回傳的不是陣列
+      } catch (e) {
+        lastErr = e;
+        if (e.message.includes("限制使用次數")) break; // 被限制了就不要再試
+      }
+    }
+    throw lastErr;
+  }));
+  return results.flat();
 }
 
 async function load() {
   document.getElementById("status").textContent = "正在抓取天氣預報…";
   document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
 
-  const where = {
-    latitude: CHECKPOINTS.map(c => c.pos[0].toFixed(4)).join(","),
-    longitude: CHECKPOINTS.map(c => c.pos[1].toFixed(4)).join(","),
-    timezone: "Asia/Taipei",
-  };
-  const weatherParams = new URLSearchParams({
-    ...where,
+  const weatherParams = {
     hourly: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
     daily: "sunrise,sunset",
     forecast_days: "16",
     wind_speed_unit: "kmh",
-  });
-  const airParams = new URLSearchParams({ ...where, hourly: "us_aqi", forecast_days: "7" });
+  };
+  const airParams = { hourly: "us_aqi", forecast_days: "7" };
 
   try {
     // 天氣和空氣品質同時去抓。空氣品質抓不到也沒關係，只是不能算那一項
     const [data, air] = await Promise.all([
-      fetchJSON("https://api.open-meteo.com/v1/forecast?" + weatherParams, "天氣服務"),
-      fetchJSON("https://air-quality-api.open-meteo.com/v1/air-quality?" + airParams, "空氣品質服務").catch(() => null),
+      fetchByGroups("https://api.open-meteo.com/v1/forecast", weatherParams, "天氣服務"),
+      fetchByGroups("https://air-quality-api.open-meteo.com/v1/air-quality", airParams, "空氣品質服務").catch(() => null),
     ]);
     Object.assign(state, { data, air, fetchedAt: Date.now(), failReason: null });
     render();
