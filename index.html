@@ -229,7 +229,7 @@ details.windy summary {
 }
 details.windy summary span { font-weight: 400; font-size: 0.85rem; color: var(--muted); }
 .windy-body { padding: 0 14px 14px; display: grid; gap: 10px; font-size: 0.88rem; }
-.windy-body iframe { width: 100%; height: 460px; border: 0; border-radius: 8px; background: var(--bg); display: block; }
+.windy-body iframe { width: 100%; height: 520px; border: 0; border-radius: 8px; background: var(--bg); display: block; }
 @media (max-width: 720px) { .windy-body iframe { height: 380px; } }
 
 .how { display: grid; gap: 10px; font-size: 0.9rem; }
@@ -322,7 +322,7 @@ details.windy summary span { font-weight: 400; font-size: 0.85rem; color: var(--
       <p id="windy-hint" class="muted"></p>
       <div id="windy-frame"></div>
       <p class="muted">
-        地圖下方的時間軸可以拖到想看的日期和時間。想看陣風，可以在地圖右邊的選單改成「Wind gusts」。
+        地圖下方的時間軸可以拖到想看的日期和時間。想看陣風，把右上角的「風速」換成「陣風」。
         <a id="windy-link" href="https://www.windy.com/?23.750,120.350,7" target="_blank" rel="noopener">在 Windy 網站開啟（全螢幕）</a>
       </p>
     </div>
@@ -1183,11 +1183,13 @@ function renderEta(trip) {
 }
 
 // Windy 嵌入地圖：對準新竹到高雄的沿海，風速用 km/h，預設 ECMWF 模型（跟可信度用的一樣）
-const WINDY_CENTER = { lat: 23.75, lon: 120.35, zoom: 7 };
+const WINDY_CENTER = { lat: 23.75, lon: 120.35 };
 function windyEmbedUrl() {
+  // 電腦版畫面夠高，放大一級讓西部沿海佔滿畫面；手機版太矮，放大會切掉路線頭尾
+  const zoom = window.innerWidth > 720 ? 8 : 7;
   const q = new URLSearchParams({
     lat: WINDY_CENTER.lat, lon: WINDY_CENTER.lon, detailLat: WINDY_CENTER.lat, detailLon: WINDY_CENTER.lon,
-    width: 650, height: 450, zoom: WINDY_CENTER.zoom, level: "surface", overlay: "wind", product: "ecmwf",
+    width: 650, height: 450, zoom, level: "surface", overlay: "wind", product: "ecmwf",
     menu: "", message: "true", marker: "", calendar: "now", pressure: "", type: "map", location: "coordinates",
     detail: "", metricWind: "km/h", metricTemp: "°C", radarRange: "-1",
   });
