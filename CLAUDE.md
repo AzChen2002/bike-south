@@ -14,7 +14,11 @@
 
 ## 更新網站
 
-推送到 `main`，GitHub Pages 會自動部署（約 1～2 分鐘）。部署狀態可以這樣查：
+推送到 `main`，GitHub Pages 會自動部署（約 1～2 分鐘）。
+
+提交時**一定要用 GitHub 的匿名 email**，不要用使用者的 Gmail（倉庫是公開的）：
+`git config user.name "AzChen2002" && git config user.email "99375218+AzChen2002@users.noreply.github.com"`
+（之前 8 次提交裡有使用者的 Gmail，使用者決定保留不改寫歷史。）部署狀態可以這樣查：
 `gh api repos/AzChen2002/bike-south/actions/runs --jq '.workflow_runs[0] | .status, .conclusion'`
 （GitHub Pages 的設定 API 在雲端環境被擋，只能請使用者自己去 Settings → Pages 調整。）
 
