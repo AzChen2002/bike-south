@@ -159,6 +159,7 @@ details.trip summary::-webkit-details-marker { display: none; }
 .bar > div { height: 100%; border-radius: 3px; background: currentColor; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; color: var(--muted); }
 .chips b { font-weight: 500; color: var(--fg); }
+.chips b.lv-good { color: var(--good); } .chips b.lv-warn { color: var(--warn); } .chips b.lv-bad { color: var(--bad); }
 .t-score { text-align: right; display: grid; justify-items: end; gap: 2px; }
 .t-score .num { font-size: 1.7rem; font-weight: 700; line-height: 1; }
 .conf { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
@@ -166,7 +167,7 @@ details.trip summary::-webkit-details-marker { display: none; }
 .detail { padding: 0 14px 14px; display: grid; gap: 16px; }
 .detail h3 { font-size: 0.9rem; font-weight: 700; }
 .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
-table { border-collapse: collapse; width: 100%; font-size: 0.82rem; min-width: 480px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.82rem; min-width: 540px; }
 th, td { padding: 5px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
 th { font-weight: 500; color: var(--muted); background: var(--bg); }
 th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
@@ -238,8 +239,9 @@ td.num { font-size: 0.95rem; }
       <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。</li>
       <li><b>風</b>：只看「順著路線方向」的那一部分。順風每 1 km/h 加 0.5 分（最多 +10），逆風每 1 km/h 扣 1.2 分（最多 −36）。陣風超過 45 km/h 另外扣分。</li>
       <li><b>氣溫</b>：每個小時的體感溫度超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。另外，一整天最熱的時候超過 35°C，因為熱會累積，那一天再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
+      <li><b>空氣品質</b>：用 AQI（分級跟環境部一樣）。51–100 普通，每多 1 扣 0.2 分；101–150 對敏感族群不健康，每多 1 扣 0.4 分；150 以上再加扣，最多一共 −45。空品預報只有大約 5 天，更遠的日子不算這一項。</li>
       <li>每小時從 100 分開始扣，一天取平均。兩天合起來時，比較差的那天佔 2/3、比較好的那天佔 1/3，因為只要有一天很糟，整趟就會很辛苦。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
-      <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>。預報越遠越不準，8 天以後的分數只能當參考。</li>
+      <li>天氣和空氣品質資料都來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>。預報越遠越不準，8 天以後的分數只能當參考。空品預報的地圖格子比較粗（一格約 40 公里），跟<a href="https://airtw.moenv.gov.tw/" target="_blank" rel="noopener">環境部空氣品質監測網</a>的測站數值可能有落差，出發前可以再對照一下。</li>
     </ul>
   </section>
 
@@ -347,15 +349,30 @@ function scoreHour(w, heading) {
   if (t < 12) heatPenalty = Math.min((12 - t) * 3, 20);
   score -= heatPenalty;
 
+  // 空氣品質（AQI）：騎車呼吸量大，空氣差要扣分。沒有空品預報的時候不扣
+  if (w.aqi != null) {
+    let airPenalty = 0;
+    if (w.aqi > 50) airPenalty = (Math.min(w.aqi, 100) - 50) * 0.2;           // 51–100：最多 −10
+    if (w.aqi > 100) airPenalty += (Math.min(w.aqi, 150) - 100) * 0.4;        // 101–150：再 −20
+    if (w.aqi > 150) airPenalty += Math.min((w.aqi - 150) * 0.3, 15);         // 150 以上：再最多 −15
+    score -= airPenalty;
+  }
+
   return { score: clamp(score, 0, 100), along };
 }
 
 // =====================================================
 // 4. 把 Open-Meteo 的資料整理成「某地點、某日期、某小時」查得到的樣子
 // =====================================================
-function buildLookup(apiData) {
+function buildLookup(apiData, airData) {
   const list = Array.isArray(apiData) ? apiData : [apiData];
-  return list.map(loc => {
+  const airList = airData ? (Array.isArray(airData) ? airData : [airData]) : [];
+  return list.map((loc, li) => {
+    // 先把這個地點的空品整理成「時間 → 數值」
+    const airByTime = new Map();
+    const ah = airList[li]?.hourly;
+    if (ah) ah.time.forEach((time, i) => airByTime.set(time, { aqi: ah.us_aqi?.[i], pm25: ah.pm2_5?.[i] }));
+
     const h = loc.hourly;
     const byTime = new Map();
     h.time.forEach((time, i) => {
@@ -367,6 +384,8 @@ function buildLookup(apiData) {
         wind: h.wind_speed_10m[i],
         windDir: h.wind_direction_10m[i],
         gust: h.wind_gusts_10m[i],
+        aqi: airByTime.get(time)?.aqi ?? null,
+        pm25: airByTime.get(time)?.pm25 ?? null,
       });
     });
     return byTime;
@@ -400,12 +419,14 @@ function evaluateDay(lookup, dateStr, day) {
     totalRain: hours.reduce((s, x) => s + (x.w.rain ?? 0), 0),
     avgAlong: hours.reduce((s, x) => s + x.along, 0) / hours.length,
     maxFeels,
+    // 沒有任何一小時有空品預報的話是 null
+    maxAqi: hours.some(x => x.w.aqi != null) ? Math.max(...hours.filter(x => x.w.aqi != null).map(x => x.w.aqi)) : null,
   };
 }
 
 // 列出所有可以出發的日期（明天起，而且隔天也要有預報）
-function evaluateAll(apiData) {
-  const lookup = buildLookup(apiData);
+function evaluateAll(apiData, airData) {
+  const lookup = buildLookup(apiData, airData);
   const first = Array.isArray(apiData) ? apiData[0] : apiData;
   const dates = [...new Set(first.hourly.time.map(t => t.slice(0, 10)))];
 
@@ -434,6 +455,20 @@ function windText(along) {
   return along > 0 ? `順風 ${v}` : `逆風 ${v}`;
 }
 
+// AQI 等級（跟環境部空氣品質指標的分級一樣）
+function aqiLevel(aqi) {
+  if (aqi <= 50) return { cls: "lv-good", text: "良好" };
+  if (aqi <= 100) return { cls: "lv-warn", text: "普通" };
+  if (aqi <= 150) return { cls: "lv-bad", text: "對敏感族群不健康" };
+  return { cls: "lv-bad", text: "不健康" };
+}
+
+function aqiChip(aqi) {
+  if (aqi == null) return `<span>空品無預報</span>`;
+  const a = aqiLevel(aqi);
+  return `<span>AQI <b class="num ${a.cls}">${Math.round(aqi)}</b></span>`;
+}
+
 function confidence(daysAhead) {
   if (daysAhead <= 3) return "預報較準";
   if (daysAhead <= 7) return "預報普通";
@@ -444,14 +479,18 @@ function daySummaryHTML(day) {
   return `
     <span>雨 <b class="num">${Math.round(day.maxRainProb)}%</b></span>
     <span><b>${windText(day.avgAlong)}</b>${Math.abs(day.avgAlong) >= 3 ? " km/h" : ""}</span>
-    <span>體感最高 <b class="num">${Math.round(day.maxFeels)}°</b></span>`;
+    <span>體感最高 <b class="num">${Math.round(day.maxFeels)}°</b></span>
+    ${aqiChip(day.maxAqi)}`;
 }
 
 function renderBest(trips) {
   const box = document.getElementById("best");
-  // 優先挑 8 天內（預報比較準）的最高分；如果 8 天內都沒有，再從全部挑
+  // 優先挑 8 天內（預報比較準）、而且兩天都有空品預報的最高分
+  // （沒有空品預報的日子不會被扣空品分，直接比較會不公平）
   const near = trips.filter(t => t.daysAhead <= 7);
-  const pool = near.length ? near : trips;
+  const full = near.filter(t => t.days.every(d => d.maxAqi != null));
+  const pool = full.length ? full : near.length ? near : trips;
+  const eyebrow = full.length ? "最近幾天（有空品預報）最推薦的出發日" : "未來一週最推薦的出發日";
   const best = pool.reduce((a, b) => (b.score > a.score ? b : a));
   const lv = level(best.score);
   const p = dateParts(best.date);
@@ -461,7 +500,7 @@ function renderBest(trips) {
     <div class="best">
       <div class="best-top">
         <div>
-          <div class="eyebrow">未來一週最推薦的出發日</div>
+          <div class="eyebrow">${eyebrow}</div>
           <div class="date">${p.md}<small>${p.weekday} 出發・${p2.weekday} 到高雄</small></div>
         </div>
         <div class="big-score">
@@ -490,6 +529,7 @@ function hourTableHTML(day) {
       <td>${windText(x.along)}</td>
       <td class="num">${Math.round(x.w.gust ?? 0)}</td>
       <td class="num">${Math.round(x.w.feels ?? x.w.temp)}°</td>
+      <td class="num ${x.w.aqi != null ? aqiLevel(x.w.aqi).cls : ""}">${x.w.aqi != null ? Math.round(x.w.aqi) : "—"}</td>
       <td class="num ${level(x.score).cls}">${Math.round(x.score)}</td>
     </tr>`).join("");
   return `
@@ -497,7 +537,7 @@ function hourTableHTML(day) {
       <table>
         <thead><tr>
           <th>時間</th><th>大約位置</th><th>降雨機率</th><th>雨量 mm</th>
-          <th>風 km/h</th><th>陣風</th><th>體感</th><th>分數</th>
+          <th>風 km/h</th><th>陣風</th><th>體感</th><th>AQI</th><th>分數</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -523,6 +563,7 @@ function renderTrips(trips, best) {
               <span>雨 <b class="num">${Math.round(Math.max(t.days[0].maxRainProb, t.days[1].maxRainProb))}%</b></span>
               <span><b>${windText((t.days[0].avgAlong + t.days[1].avgAlong) / 2)}</b></span>
               <span>體感 <b class="num">${Math.round(Math.max(t.days[0].maxFeels, t.days[1].maxFeels))}°</b></span>
+              ${aqiChip(t.days[0].maxAqi == null && t.days[1].maxAqi == null ? null : Math.max(t.days[0].maxAqi ?? 0, t.days[1].maxAqi ?? 0))}
               <span>較差那天 <b class="num">${worst}</b></span>
             </div>
           </div>
@@ -548,15 +589,15 @@ function nextDate(dateStr) {
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
 }
 
-function render(apiData, fetchedAt, failReason) {
-  const trips = evaluateAll(apiData);
+function render(apiData, airData, fetchedAt, failReason) {
+  const trips = evaluateAll(apiData, airData);
   if (!trips.length) throw new Error("預報資料裡找不到可以評分的日期");
   const best = renderBest(trips);
   renderTrips(trips, best);
   const time = new Date(fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   document.getElementById("status").textContent = failReason
     ? `這次沒抓到新預報：${failReason}。先顯示 ${time} 存下來的預報。`
-    : `預報更新時間：${time}`;
+    : `預報更新時間：${time}${airData ? "" : "（這次沒抓到空氣品質，先不算空品）"}`;
 }
 
 function showError(message) {
@@ -572,51 +613,69 @@ function showError(message) {
 // =====================================================
 // 6. 抓資料：一次把 11 個檢查點的預報都要回來
 // =====================================================
-async function load() {
-  const status = document.getElementById("status");
-  status.textContent = "正在抓取天氣預報…";
-  document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
-
-  const params = new URLSearchParams({
-    latitude: ROUTE.map(p => p.lat).join(","),
-    longitude: ROUTE.map(p => p.lon).join(","),
-    hourly: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
-    timezone: "Asia/Taipei",
-    forecast_days: "16",
-    wind_speed_unit: "kmh",
-  });
-
+// 向某個網址要 JSON 資料；失敗時丟出看得懂的中文錯誤
+async function fetchJSON(url, serviceName) {
   // 超過 20 秒沒回應就放棄
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
-
   try {
     let res;
     try {
-      res = await fetch("https://api.open-meteo.com/v1/forecast?" + params, { signal: controller.signal });
+      res = await fetch(url, { signal: controller.signal });
     } catch (e) {
-      if (e.name === "AbortError") throw new Error("天氣服務超過 20 秒沒回應");
+      if (e.name === "AbortError") throw new Error(`${serviceName}超過 20 秒沒回應`);
       if (!navigator.onLine) throw new Error("你的裝置沒有連上網路");
-      throw new Error("連不到天氣服務，可能是網路不穩或服務暫時有問題");
+      throw new Error(`連不到${serviceName}，可能是網路不穩或服務暫時有問題`);
     }
-    if (res.status === 429) throw new Error("天氣服務暫時限制使用次數，請過幾分鐘再試");
-    if (res.status >= 500) throw new Error(`天氣服務暫時故障（錯誤碼 ${res.status}）`);
-    if (!res.ok) throw new Error(`天氣服務不接受這次的查詢（錯誤碼 ${res.status}）`);
-    const data = await res.json();
+    if (res.status === 429) throw new Error(`${serviceName}暫時限制使用次數，請過幾分鐘再試`);
+    if (res.status >= 500) throw new Error(`${serviceName}暫時故障（錯誤碼 ${res.status}）`);
+    if (!res.ok) throw new Error(`${serviceName}不接受這次的查詢（錯誤碼 ${res.status}）`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function load() {
+  const status = document.getElementById("status");
+  status.textContent = "正在抓取天氣和空氣品質預報…";
+  document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
+
+  const where = {
+    latitude: ROUTE.map(p => p.lat).join(","),
+    longitude: ROUTE.map(p => p.lon).join(","),
+    timezone: "Asia/Taipei",
+  };
+  const weatherParams = new URLSearchParams({
+    ...where,
+    hourly: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+    forecast_days: "16",
+    wind_speed_unit: "kmh",
+  });
+  const airParams = new URLSearchParams({
+    ...where,
+    hourly: "us_aqi,pm2_5",
+    forecast_days: "7",
+  });
+
+  try {
+    // 天氣和空氣品質同時去抓。空氣品質抓不到也沒關係，只是少算那一項
+    const [data, air] = await Promise.all([
+      fetchJSON("https://api.open-meteo.com/v1/forecast?" + weatherParams, "天氣服務"),
+      fetchJSON("https://air-quality-api.open-meteo.com/v1/air-quality?" + airParams, "空氣品質服務").catch(() => null),
+    ]);
     const fetchedAt = Date.now();
-    render(data, fetchedAt, null);
+    render(data, air, fetchedAt, null);
     // 存一份在瀏覽器裡，下次沒網路時還能看
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt, data })); } catch (e) {}
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt, data, air })); } catch (e) {}
   } catch (err) {
     // 抓失敗的話，試著用上次存下來的資料
     let cached = null;
     try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) {}
     if (cached) {
-      try { render(cached.data, cached.fetchedAt, err.message || "發生錯誤"); return; } catch (e) {}
+      try { render(cached.data, cached.air ?? null, cached.fetchedAt, err.message || "發生錯誤"); return; } catch (e) {}
     }
     showError(err.message || "發生錯誤");
-  } finally {
-    clearTimeout(timer);
   }
 }
 
