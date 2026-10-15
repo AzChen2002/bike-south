@@ -325,6 +325,7 @@ td.num { font-size: 0.95rem; }
       <li><b>風是主要考量</b>：力氣用「無風時速」來設定（上面的選單，以輕裝公路車計算）。風的分數：無風是 80 分，比無風每省 1% 的騎乘時間加 1 分（最高 100），每多花 1% 扣 1 分。</li>
       <li>天氣預報的風速是離地 10 公尺的風，騎車的高度風比較小，所以用 70% 來計算。畫面上顯示的風速還是預報原本的數字。</li>
       <li><b>危險的風</b>：側風超過 25 km/h，每多 1 km/h 扣 1 分（最多 −15）；陣風超過 40 km/h，每多 1 km/h 扣 1.5 分（最多 −25）。</li>
+      <li><b>強陣風安全上限</b>：騎乘途中最強的陣風（預估經過時間的前後 1 小時都算進去，因為實際速度可能比預估快或慢）到 60 km/h 以上，那天最多只能 59 分（勉強）；到 75 km/h 以上，最多只能 39 分（不建議）。順風再好也一樣，因為強陣風可能把人連車吹倒。</li>
       <li><b>摸黑騎</b>：日出前、日落後騎車的時間，每 1 小時扣 4 分（最多 −24）。順風越早到，摸黑越少。</li>
       <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。<b>氣溫</b>：體感超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。一天最熱超過 35°C，再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
       <li><b>空氣品質（選用）</b>：勾選後才算。AQI 51–100 每多 1 扣 0.2 分，101–150 每多 1 扣 0.4 分，150 以上再加扣，最多 −45。空品預報只有大約 5 天。</li>
@@ -383,6 +384,13 @@ const MODES = {
 const ENS_CPS = [0, 4, 8, 12, LAST_CP];
 
 const REST_PER_HOUR = 10 / 60;  // 每騎 1 小時休息 10 分鐘
+
+// 安全上限：騎乘途中最強的陣風太大，不管順風多好，分數最高只能到這裡
+const GUST_CAPS = [
+  { gust: 75, cap: 39 }, // 9 級風以上，可能被吹倒 → 不建議
+  { gust: 60, cap: 59 }, // 7～8 級風，逆著走路都吃力 → 勉強
+];
+const STRONG_GUST = GUST_CAPS[GUST_CAPS.length - 1].gust;
 
 // 騎車的人和車（輕裝公路車）
 const RIDER = {
@@ -624,7 +632,9 @@ function simulateDay(W, startT, fromCp, toCp, calmKmh, useAir) {
     }
 
     penSum += p * dMove; alongSum += along * dMove; crossSum += cross * dMove;
-    maxGust = Math.max(maxGust, w.gust ?? 0);
+    // 陣風看「預估經過的時間前後各 1 小時」，因為實際騎的速度可能比預估快或慢
+    const hrs = W[s.weatherCp].hours, hi = Math.floor(t);
+    for (let k = hi - 1; k <= hi + 1; k++) if (hrs[k]) maxGust = Math.max(maxGust, hrs[k].gust ?? 0);
     maxRainProb = Math.max(maxRainProb, w.rainProb ?? 0);
     maxFeels = Math.max(maxFeels, w.feels ?? w.temp ?? 0);
     if (w.aqi != null) aqis.push(w.aqi);
@@ -648,11 +658,18 @@ function simulateDay(W, startT, fromCp, toCp, calmKmh, useAir) {
     sunsetTime: endSun?.set,
     moving, calmMoving, dark,
     windScore: Math.round(windScore), avgPenalty, heatDayPenalty, darkPenalty,
-    score: Math.round(clamp(windScore - avgPenalty - heatDayPenalty - darkPenalty, 0, 100)),
+    ...applyGustCap(Math.round(clamp(windScore - avgPenalty - heatDayPenalty - darkPenalty, 0, 100)), maxGust),
     avgAlong: alongSum / moving, avgCross: crossSum / moving,
     maxGust, maxRainProb, maxFeels,
     maxAqi: useAir && aqis.length ? Math.max(...aqis) : null,
   };
+}
+
+// 陣風太強就把分數壓到上限
+function applyGustCap(score, maxGust) {
+  const rule = GUST_CAPS.find(r => maxGust >= r.gust);
+  if (rule && score > rule.cap) return { score: rule.cap, gustCap: rule, scoreBeforeCap: score };
+  return { score, gustCap: null };
 }
 
 // 列出所有可以出發的日期（明天起，而且整趟都要在預報範圍內）
@@ -861,6 +878,12 @@ function startNote(d) {
   return diff > 0 ? `比 ${fmtHourOfDay(def)} 出發多 ${diff} 分` : "";
 }
 
+function gustChip(gust) {
+  return gust >= STRONG_GUST
+    ? `<span class="lv-bad">⚠ 強陣風 <b class="num lv-bad">${Math.round(gust)}</b></span>`
+    : `<span>陣風 <b class="num">${Math.round(gust)}</b></span>`;
+}
+
 function confidence(daysAhead) {
   if (daysAhead <= 3) return "預報較準";
   if (daysAhead <= 7) return "預報普通";
@@ -905,7 +928,7 @@ function dayBoxHTML(d, k, baseDay) {
         ${d.dark >= 5 / 60 ? `<span>摸黑 <b>${fmtHours(d.dark)}</b></span>` : ""}
       </div>
       <div class="chips">
-        <span>陣風 <b class="num">${Math.round(d.maxGust)}</b></span>
+        ${gustChip(d.maxGust)}
         <span>雨 <b class="num">${Math.round(d.maxRainProb)}%</b></span>
         <span>體感最高 <b class="num">${Math.round(d.maxFeels)}°</b></span>
         ${aqiChip(d.maxAqi)}
@@ -932,6 +955,7 @@ function renderBest(trips) {
         </div>
       </div>
       <div class="best-days">${best.days.map((d, k) => dayBoxHTML(d, k, best.di + k)).join("")}</div>
+      ${best.days.some(d => d.maxGust >= STRONG_GUST) ? `<p class="ens-line lv-bad">⚠ 這天騎乘途中陣風會到 ${Math.round(Math.max(...best.days.map(d => d.maxGust)))} km/h，可能是強烈東北季風或颱風外圍。出發前請到<a href="https://www.cwa.gov.tw/" target="_blank" rel="noopener">中央氣象署</a>確認有沒有颱風或陸上強風特報。</p>` : ""}
       <p class="ens-line">預報可信度：${confSentence(best)}</p>
     </div>`;
   return best;
@@ -978,6 +1002,7 @@ function breakdownHTML(d) {
   if (d.avgPenalty >= 0.5) parts.push(`雨熱等 −${Math.round(d.avgPenalty)}`);
   if (d.heatDayPenalty) parts.push(`整天高溫 −${d.heatDayPenalty}`);
   if (d.darkPenalty) parts.push(`摸黑 −${d.darkPenalty}`);
+  if (d.gustCap) parts.push(`陣風到 ${Math.round(d.maxGust)}，最多只能 ${d.gustCap.cap} 分`);
   return `<span class="small muted" style="font-weight:400">（${parts.join("、")}）</span>`;
 }
 
@@ -1004,7 +1029,7 @@ function renderTrips(trips, best) {
               <span><b class="num">${t.days.map((d, k) => fmtClock(d.startT, t.di + k)).join("／")}</b> 出發</span>
               <span><b class="num">${fmtClock(last.endT, t.di + t.days.length - 1)}</b> 到</span>
               ${t.dark >= 5 / 60 ? `<span>摸黑 <b>${fmtHours(t.dark)}</b></span>` : ""}
-              <span>陣風 <b class="num">${Math.round(Math.max(...t.days.map(d => d.maxGust)))}</b></span>
+              ${gustChip(Math.max(...t.days.map(d => d.maxGust)))}
               <span>雨 <b class="num">${Math.round(Math.max(...t.days.map(d => d.maxRainProb)))}%</b></span>
               <span>體感 <b class="num">${Math.round(Math.max(...t.days.map(d => d.maxFeels)))}°</b></span>
               ${aqiChip(anyAqi ? Math.max(...t.days.map(d => d.maxAqi ?? 0)) : null)}
