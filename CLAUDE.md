@@ -10,7 +10,8 @@
 
 - `index.html`：整個網站就這一個檔（HTML + CSS + JS），沒有建置步驟。程式碼的註解用中文，寫法維持簡單的原生 JS
 - `tools/prep_route.py`：從 GPX 產生路線資料（`ROUTE_PTS`、`CHECKPOINTS`）
-- 外部資源：Google Fonts、Leaflet 1.9.4（cdnjs）、OpenStreetMap 底圖、Open-Meteo API（不需要金鑰）
+- 外部資源：Google Fonts、Leaflet 1.9.4（cdnjs）、OpenStreetMap 底圖、Open-Meteo API（不需要金鑰）、Windy 嵌入地圖（`embed.windy.com/embed2.html`，免費、不用金鑰）
+- **Windy 只用來給使用者對照，不拿它的數字算分數**：Windy 的資料 API 要付費，免費試用金鑰會回傳隨機打亂的假資料，而且金鑰放在公開網頁會外流；它的資料來源（ECMWF、GFS、ICON）Open-Meteo 都有免費提供。嵌入地圖預設收起來，打開 `#windy-box` 才放進 iframe。能不能用網址參數跳到指定日期時間還沒確認，目前用 `calendar=now`，請使用者自己拖時間軸
 
 ## 更新網站
 

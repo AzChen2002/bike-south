@@ -221,6 +221,17 @@ tr:last-child td { border-bottom: 0; }
 td.num { font-size: 0.95rem; }
 
 /* ---------- 說明區 ---------- */
+/* ---------- Windy 風場地圖 ---------- */
+details.windy { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.windy summary {
+  cursor: pointer; padding: 12px 14px; font-weight: 700;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+}
+details.windy summary span { font-weight: 400; font-size: 0.85rem; color: var(--muted); }
+.windy-body { padding: 0 14px 14px; display: grid; gap: 10px; font-size: 0.88rem; }
+.windy-body iframe { width: 100%; height: 460px; border: 0; border-radius: 8px; background: var(--bg); display: block; }
+@media (max-width: 720px) { .windy-body iframe { height: 380px; } }
+
 .how { display: grid; gap: 10px; font-size: 0.9rem; }
 .how ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
 .how li { max-width: 68ch; }
@@ -305,6 +316,18 @@ td.num { font-size: 0.95rem; }
     </div>
   </section>
 
+  <details class="windy" id="windy-box">
+    <summary>在 Windy 看風場 <span>動態風場地圖，用來對照我們的分數（按了才載入，比較省流量）</span></summary>
+    <div class="windy-body">
+      <p id="windy-hint" class="muted"></p>
+      <div id="windy-frame"></div>
+      <p class="muted">
+        地圖下方的時間軸可以拖到想看的日期和時間。想看陣風，可以在地圖右邊的選單改成「Wind gusts」。
+        <a id="windy-link" href="https://www.windy.com/?23.750,120.350,7" target="_blank" rel="noopener">在 Windy 網站開啟（全螢幕）</a>
+      </p>
+    </div>
+  </details>
+
   <section class="list">
     <div class="list-head">
       <h2>每個出發日</h2>
@@ -331,7 +354,7 @@ td.num { font-size: 0.95rem; }
       <li><b>空氣品質（選用）</b>：勾選後才算。AQI 51–100 每多 1 扣 0.2 分，101–150 每多 1 扣 0.4 分，150 以上再加扣，最多 −45。空品預報只有大約 5 天。</li>
       <li><b>合起來</b>：一天的分數 = 風的分數 − 雨、熱、危險風（和空品）扣分的平均 − 整天高溫 − 摸黑。兩日的話，比較差的那天佔 2/3。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
       <li><b>省用量</b>：Open-Meteo 免費版有使用次數上限，所以 1 小時內重新打開網頁會直接用存下來的預報，系集預報則是 3 小時。要最新的請按「重新整理」。</li>
-      <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>，地圖來自 OpenStreetMap。預報越遠越不準，8 天以後只能當參考。一日 290 km 會長時間跟大車同路又有夜騎，前後燈、反光背心和補給點請自己準備好。</li>
+      <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>，地圖來自 OpenStreetMap，動態風場地圖來自 <a href="https://www.windy.com/" target="_blank" rel="noopener">Windy</a>（只是給你對照用，沒有算進分數）。預報越遠越不準，8 天以後只能當參考。一日 290 km 會長時間跟大車同路又有夜騎，前後燈、反光背心和補給點請自己準備好。</li>
     </ul>
   </section>
 
@@ -1159,6 +1182,34 @@ function renderEta(trip) {
     </table>`;
 }
 
+// Windy 嵌入地圖：對準新竹到高雄的沿海，風速用 km/h，預設 ECMWF 模型（跟可信度用的一樣）
+const WINDY_CENTER = { lat: 23.75, lon: 120.35, zoom: 7 };
+function windyEmbedUrl() {
+  const q = new URLSearchParams({
+    lat: WINDY_CENTER.lat, lon: WINDY_CENTER.lon, detailLat: WINDY_CENTER.lat, detailLon: WINDY_CENTER.lon,
+    width: 650, height: 450, zoom: WINDY_CENTER.zoom, level: "surface", overlay: "wind", product: "ecmwf",
+    menu: "", message: "true", marker: "", calendar: "now", pressure: "", type: "map", location: "coordinates",
+    detail: "", metricWind: "km/h", metricTemp: "°C", radarRange: "-1",
+  });
+  return "https://embed.windy.com/embed2.html?" + q;
+}
+
+// 打開時才放進地圖（Windy 的地圖很吃流量和效能）
+document.getElementById("windy-box").addEventListener("toggle", e => {
+  const box = document.getElementById("windy-frame");
+  if (!e.target.open || box.querySelector("iframe")) return;
+  box.innerHTML = `<iframe src="${windyEmbedUrl()}" title="Windy 風場地圖" loading="lazy" allowfullscreen></iframe>`;
+});
+
+function updateWindyHint(trip) {
+  const p = dateParts(trip.date);
+  const d = trip.days[0], last = trip.days[trip.days.length - 1];
+  const end = `${dateParts(state.dates[trip.di + trip.days.length - 1]).md} ${fmtClock(last.endT, trip.di + trip.days.length - 1)}`;
+  document.getElementById("windy-hint").innerHTML =
+    `目前選的是 <b>${p.md}（${p.weekday}）${fmtClock(d.startT, trip.di)} 出發</b>，預估 <b>${end}</b> 到左營。` +
+    `把 Windy 的時間軸拖到這段時間，看看箭頭是不是一路從北往南吹。`;
+}
+
 function selectTrip(date) {
   const trip = state.trips.find(t => t.date === date);
   if (!trip) return;
@@ -1167,6 +1218,7 @@ function selectTrip(date) {
   document.getElementById("map-caption").textContent = `顯示 ${p.md}（${p.weekday}）出發・${trip.score} 分`;
   document.querySelectorAll("details.trip").forEach(el => el.classList.toggle("on-map", el.dataset.date === date));
   drawMap(trip);
+  updateWindyHint(trip);
   renderEta(trip);
 }
 
