@@ -128,6 +128,9 @@ button:focus-visible, summary:focus-visible, select:focus-visible, input:focus-v
 .day-box h3 { font-size: 0.9rem; font-weight: 500; display: flex; justify-content: space-between; gap: 8px; }
 .day-box .timeline { font-size: 0.95rem; }
 .day-box .timeline b { font-family: var(--font-display); font-size: 1.15rem; }
+.day-box .timeline .pill { margin-left: 4px; vertical-align: 2px; }
+.ens-line { font-size: 0.88rem; color: var(--muted); max-width: 70ch; }
+.ens-line b { color: var(--fg); }
 
 /* ---------- 分數顏色 ---------- */
 .pill { display: inline-block; font-size: 0.78rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
@@ -267,6 +270,9 @@ td.num { font-size: 0.95rem; }
           <option value="30">30 km/h</option>
         </select>
       </label>
+      <label class="field" for="start">出發時間
+        <select id="start"></select>
+      </label>
       <label class="toggle" for="use-air">
         <input type="checkbox" id="use-air">
         空氣品質也算進分數 <span class="muted">（預報只有約 5 天）</span>
@@ -312,7 +318,9 @@ td.num { font-size: 0.95rem; }
     <h2>分數怎麼算</h2>
     <ul>
       <li><b>路線</b>：用 TBA 一日北高 360 的 GPX，從新竹南寮漁港附近截到高雄左營，約 <span id="total-km">293</span> km，走西部沿海。沿路每 20 km 設一個天氣檢查點。</li>
-      <li><b>一日</b>：05:00 出發，一天騎完。<b>兩日</b>：每天 06:00 出發，第 1 天騎到大城附近（約 137 km）過夜。</li>
+      <li><b>一日</b>：一天騎完。<b>兩日</b>：第 1 天騎到大城附近（約 137 km）過夜。</li>
+      <li><b>出發時間</b>：預設「自動」。一日會試 03:00～07:00、兩日每天試 05:00～08:00，每半小時試一次，選分數最高的時間（分數一樣就選最接近一日 05:00、兩日 06:00 的）。也可以在上面的選單自己指定。</li>
+      <li><b>預報可信度</b>：另外抓「系集預報」（ECMWF 的 51 種預測，最遠約 15 天；抓不到時改用 GFS 的 31 種），每一種都跑一次模擬騎乘。「順風機率」是其中風讓你比無風更快的比例；「預測一致／普通／分歧」看各預測算出來的騎乘時間差多少。可信度不影響分數，只是幫你判斷這個分數能信幾成。</li>
       <li><b>模擬騎乘</b>：從出發時間開始，每 1 公里用「那個位置、那個時間」的風，算出用同樣的力氣能騎多快，一路累積出到達每個地點的時間。每騎 1 小時休息 10 分鐘也算進去。</li>
       <li><b>風是主要考量</b>：力氣用「無風時速」來設定（上面的選單，以輕裝公路車計算）。風的分數：無風是 80 分，比無風每省 1% 的騎乘時間加 1 分（最高 100），每多花 1% 扣 1 分。</li>
       <li>天氣預報的風速是離地 10 公尺的風，騎車的高度風比較小，所以用 70% 來計算。畫面上顯示的風速還是預報原本的數字。</li>
@@ -358,13 +366,20 @@ const cpLabel = i => (i === 0 || i === CHECKPOINTS.length - 1) ? CHECKPOINTS[i].
 // 兩種行程
 const SPLIT_CP = 7; // 兩日行程第 1 天騎到第幾個檢查點（大城）
 const LAST_CP = CHECKPOINTS.length - 1;
+// 每半小時一個出發時間：halfHours(3, 7) = [3, 3.5, 4, ..., 7]
+const halfHours = (a, b) => Array.from({ length: (b - a) * 2 + 1 }, (_, i) => a + i / 2);
 const MODES = {
-  1: { days: [{ label: "一日", from: 0, to: LAST_CP, startHour: 5 }] },
-  2: { days: [
-    { label: "第 1 天", from: 0, to: SPLIT_CP, startHour: 6 },
-    { label: "第 2 天", from: SPLIT_CP, to: LAST_CP, startHour: 6 },
-  ] },
+  1: { label: "一日", startOptions: halfHours(3, 7), defaultStart: 5,
+       days: [{ label: "一日", from: 0, to: LAST_CP }] },
+  2: { label: "兩日", startOptions: halfHours(5, 8), defaultStart: 6,
+       days: [
+         { label: "第 1 天", from: 0, to: SPLIT_CP },
+         { label: "第 2 天", from: SPLIT_CP, to: LAST_CP },
+       ] },
 };
+
+// 系集預報（看可信度用）只抓這幾個檢查點：南寮、清水、台西、七股、左營
+const ENS_CPS = [0, 4, 8, 12, LAST_CP];
 
 const REST_PER_HOUR = 10 / 60;  // 每騎 1 小時休息 10 分鐘
 
@@ -378,6 +393,7 @@ const RIDER = {
 const WIND_HEIGHT_FACTOR = 0.7; // 預報是 10 公尺高的風，騎車高度的風大約只有 70%
 
 const CACHE_KEY = "bike-south-forecast-v2";
+const ENS_CACHE_KEY = "bike-south-ensemble-v1";
 const PREF_KEY = "bike-south-prefs";
 
 // =====================================================
@@ -435,9 +451,14 @@ for (let s = 0; s < LAST_CP; s++) {
     const from = a + (b - a) * k / n, to = a + (b - a) * (k + 1) / n;
     const mid = (from + to) / 2;
     const weatherCp = CHECKPOINTS.reduce((best, c, i) => Math.abs(c.km - mid) < Math.abs(CHECKPOINTS[best].km - mid) ? i : best, 0);
-    STEPS.push({ from, to, len: to - from, heading: bearing(pointAtKm(from), pointAtKm(to)), weatherCp, seg: s, endsCp: k === n - 1 });
+    const heading = bearing(pointAtKm(from), pointAtKm(to));
+    STEPS.push({ from, to, len: to - from, heading, sinH: Math.sin(toRad(heading)), cosH: Math.cos(toRad(heading)), weatherCp, seg: s, endsCp: k === n - 1 });
   }
 }
+
+// 每個檢查點要用哪一個系集預報點的風（取里程最近的）
+const ENS_OF_CP = CHECKPOINTS.map(c =>
+  ENS_CPS.reduce((best, cp, i) => Math.abs(CHECKPOINTS[cp].km - c.km) < Math.abs(CHECKPOINTS[ENS_CPS[best]].km - c.km) ? i : best, 0));
 
 // =====================================================
 // 3. 騎車的力學：同樣的力氣，在某個順風／逆風下能騎多快
@@ -453,7 +474,17 @@ function powerFor(calmKmh) {
   return v * (ROLL_FORCE + AIR_K * v * v);
 }
 
+// 同樣的風會一直重複算，所以把算過的時速存起來（順風速度取到 0.5 km/h）
+const speedCache = new Map();
 function riderSpeed(alongKmh, calmKmh) {
+  const half = Math.round(alongKmh * 2);
+  const key = calmKmh * 1000 + half;
+  let v = speedCache.get(key);
+  if (v === undefined) { v = solveSpeed(half / 2, calmKmh); speedCache.set(key, v); }
+  return v;
+}
+
+function solveSpeed(alongKmh, calmKmh) {
   const P = powerFor(calmKmh);
   const w = alongKmh * WIND_HEIGHT_FACTOR / 3.6; // 騎車高度的順風（公尺/秒）
   const powerAt = v => v * (ROLL_FORCE + AIR_K * (v - w) * Math.abs(v - w));
@@ -626,10 +657,28 @@ function simulateDay(W, startT, fromCp, toCp, calmKmh, useAir) {
 // 列出所有可以出發的日期（明天起，而且整趟都要在預報範圍內）
 function evaluateAll() {
   const { mode, calm, useAir } = prefs;
+  const M = MODES[mode];
   const { W, dates } = buildWeather(state.data, useAir ? state.air : null);
+  const E = buildEnsemble(state.ens?.list, dates);
+  const chosen = prefs.start[mode];
+  // 自動的話，每個出發時間都試試看；離預設時間近的先試，分數一樣時就選它
+  const candidates = chosen === "auto"
+    ? [...M.startOptions].sort((a, b) => Math.abs(a - M.defaultStart) - Math.abs(b - M.defaultStart))
+    : [chosen];
+
   const trips = [];
   for (let di = 1; di < dates.length; di++) {
-    const days = MODES[mode].days.map((d, k) => simulateDay(W, (di + k) * 24 + d.startHour, d.from, d.to, calm, useAir));
+    const days = M.days.map((d, k) => {
+      let best = null, atDefault = null;
+      for (const h of candidates) {
+        const r = simulateDay(W, (di + k) * 24 + h, d.from, d.to, calm, useAir);
+        if (!r) continue;
+        if (h === M.defaultStart) atDefault = r;
+        if (!best || r.score > best.score) best = r;
+      }
+      if (best) Object.assign(best, { auto: chosen === "auto", atDefault });
+      return best;
+    });
     if (days.some(d => !d)) continue;
     const scores = days.map(d => d.score);
     trips.push({
@@ -641,7 +690,97 @@ function evaluateAll() {
       dark: days.reduce((s, d) => s + d.dark, 0),
     });
   }
+  trips.forEach(t => { t.conf = tripConfidence(E, t); });
   return trips;
+}
+
+// =====================================================
+// 5b. 預報可信度：用系集預報（幾十種略有不同的預測）各跑一次模擬騎乘
+// =====================================================
+
+// 陣列裡中間缺的值用前後的值補（系集預報常常每 3 或 6 小時才有一筆）
+function fillGaps(a) {
+  let last = -1;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] == null) continue;
+    if (last >= 0 && i - last > 1) {
+      for (let j = last + 1; j < i; j++) a[j] = a[last] + (a[i] - a[last]) * (j - last) / (i - last);
+    }
+    last = i;
+  }
+  return last >= 0;
+}
+
+// 整理成 E.locs[系集點][第幾種預測] = { u, v }：風往東、往北吹的分量，索引是「從第一天 00:00 起第幾小時」
+function buildEnsemble(list, dates) {
+  if (!list || list.length !== ENS_CPS.length) return null;
+  const dayIndex = new Map(dates.map((d, i) => [d, i]));
+  const size = dates.length * 24;
+  const locs = list.map(loc => {
+    const h = loc.hourly;
+    const idx = h.time.map(t => dayIndex.has(t.slice(0, 10)) ? dayIndex.get(t.slice(0, 10)) * 24 + Number(t.slice(11, 13)) : -1);
+    const members = [];
+    for (const key of Object.keys(h)) {
+      // 欄位名稱像 wind_speed_10m、wind_speed_10m_member01……，每一個就是一種預測
+      const m = /^wind_speed_10m(.*)$/.exec(key);
+      const dirKey = m && "wind_direction_10m" + m[1];
+      if (!m || !h[dirKey]) continue;
+      const u = new Array(size).fill(null), v = new Array(size).fill(null);
+      h[key].forEach((speed, i) => {
+        const dir = h[dirKey][i];
+        if (speed == null || dir == null || idx[i] < 0) return;
+        const to = toRad(dir + 180);
+        u[idx[i]] = speed * Math.sin(to);
+        v[idx[i]] = speed * Math.cos(to);
+      });
+      if (fillGaps(u) && fillGaps(v)) members.push({ u, v });
+    }
+    return members;
+  });
+  const n = Math.min(...locs.map(l => l.length));
+  if (n < 10) return null; // 預測太少就不算
+  return { locs: locs.map(l => l.slice(0, n)), n };
+}
+
+// 用第 m 種預測的風，只算「純騎乘時間」
+function simulateMoving(E, m, startT, fromCp, toCp, calmKmh) {
+  let t = startT, moving = 0;
+  for (const s of STEPS) {
+    if (s.seg < fromCp || s.seg >= toCp) continue;
+    const mem = E.locs[ENS_OF_CP[s.weatherCp]][m];
+    const i = Math.floor(t);
+    if (mem.u[i] == null || mem.v[i] == null) return null; // 超過預報範圍
+    const along = mem.u[i] * s.sinH + mem.v[i] * s.cosH;
+    const dMove = s.len / riderSpeed(along, calmKmh);
+    moving += dMove;
+    t += dMove * (1 + REST_PER_HOUR);
+  }
+  return moving;
+}
+
+function tripConfidence(E, trip) {
+  if (!E) return null;
+  const results = [];
+  for (let m = 0; m < E.n; m++) {
+    let total = 0;
+    for (const d of trip.days) {
+      const mv = simulateMoving(E, m, d.startT, d.fromCp, d.toCp, prefs.calm);
+      if (mv == null) { total = null; break; }
+      total += mv;
+    }
+    if (total != null) results.push(total);
+  }
+  if (results.length < 10) return null;
+  results.sort((a, b) => a - b);
+  const pick = p => results[Math.round(p * (results.length - 1))];
+  const lo = pick(0.1), hi = pick(0.9); // 去掉最好和最差各 10%
+  const spread = (hi - lo) / trip.calmMoving * 100;
+  return {
+    n: results.length,
+    tailProb: results.filter(x => x < trip.calmMoving).length / results.length, // 比無風快的比例
+    lo, hi,
+    agree: spread <= 10 ? "一致" : spread <= 25 ? "普通" : "分歧",
+  };
 }
 
 // =====================================================
@@ -688,6 +827,38 @@ function aqiChip(aqi) {
   return `<span>AQI <b class="num ${aqiLevel(aqi).cls}">${Math.round(aqi)}</b></span>`;
 }
 
+function fmtHourOfDay(h) {
+  return `${String(Math.floor(h)).padStart(2, "0")}:${h % 1 ? "30" : "00"}`;
+}
+
+function confChip(c) {
+  if (!c) return "";
+  const pct = Math.round(c.tailProb * 100);
+  const cls = pct >= 70 ? "lv-good" : pct >= 40 ? "lv-warn" : "lv-bad";
+  return `<span title="${c.n} 種預測裡，風讓你比無風更快的比例">順風機率 <b class="num ${cls}">${pct}%</b></span>`;
+}
+
+function confSentence(t) {
+  const c = t.conf;
+  if (!c) {
+    return state.ens
+      ? "這天太遠，系集預報還沒涵蓋到，沒辦法評估可信度。"
+      : "這次沒抓到系集預報，沒辦法評估可信度。";
+  }
+  const favorable = Math.round(c.tailProb * c.n);
+  return `${c.n} 種預測裡，有 <b>${favorable} 種</b>的風讓你比無風更快（順風機率 <b>${Math.round(c.tailProb * 100)}%</b>）。` +
+    `純騎乘時間大多落在 <b>${fmtHours(c.lo)}～${fmtHours(c.hi)}</b>，各預測的意見<b>${c.agree}</b>。`;
+}
+
+function startNote(d) {
+  if (!d.auto) return "";
+  const def = MODES[prefs.mode].defaultStart;
+  const h = d.startT % 24;
+  if (h === def || !d.atDefault) return "";
+  const diff = d.score - d.atDefault.score;
+  return diff > 0 ? `比 ${fmtHourOfDay(def)} 出發多 ${diff} 分` : "";
+}
+
 function confidence(daysAhead) {
   if (daysAhead <= 3) return "預報較準";
   if (daysAhead <= 7) return "預報普通";
@@ -720,7 +891,8 @@ function dayBoxHTML(d, k, baseDay) {
   return `
     <div class="day-box">
       <h3><span>${dayTitle(d, k)}</span><span class="num ${level(d.score).cls}">${d.score}</span></h3>
-      <div class="timeline">${fmtClock(d.startT, baseDay)} 出發 → 預估 <b>${fmtClock(d.endT, baseDay)}</b> 到${cpLabel(d.toCp)}</div>
+      <div class="timeline"><b>${fmtClock(d.startT, baseDay)}</b> 出發${d.auto ? `<span class="pill lv-ok">自動選的</span>` : ""} → 預估 <b>${fmtClock(d.endT, baseDay)}</b> 到${cpLabel(d.toCp)}</div>
+      ${startNote(d) ? `<div class="chips"><span><b class="lv-good">${startNote(d)}</b></span></div>` : ""}
       <div class="windline">
         ${arrowSVG(d.avgAlong, d.avgCross, 22)}
         <span class="w-main">${windText(d.avgAlong, d.avgCross)}${windKind(d.avgAlong, d.avgCross).calm ? "" : " km/h"}</span>
@@ -758,6 +930,7 @@ function renderBest(trips) {
         </div>
       </div>
       <div class="best-days">${best.days.map((d, k) => dayBoxHTML(d, k, best.di + k)).join("")}</div>
+      <p class="ens-line">預報可信度：${confSentence(best)}</p>
     </div>`;
   return best;
 }
@@ -825,6 +998,8 @@ function renderTrips(trips, best) {
             <div class="chips">
               <span class="lead arrows" title="平均風向">${t.days.map(d => arrowSVG(d.avgAlong, d.avgCross)).join("")}</span>
               <span class="lead">${timeDiffHTML(t.moving, t.calmMoving)}</span>
+              ${confChip(t.conf)}
+              <span><b class="num">${t.days.map((d, k) => fmtClock(d.startT, t.di + k)).join("／")}</b> 出發</span>
               <span><b class="num">${fmtClock(last.endT, t.di + t.days.length - 1)}</b> 到</span>
               ${t.dark >= 5 / 60 ? `<span>摸黑 <b>${fmtHours(t.dark)}</b></span>` : ""}
               <span>陣風 <b class="num">${Math.round(Math.max(...t.days.map(d => d.maxGust)))}</b></span>
@@ -835,14 +1010,15 @@ function renderTrips(trips, best) {
           </div>
           <div class="t-score">
             <span class="num ${lv.cls}">${t.score}</span>
-            <span class="conf">${t === best ? "推薦・" : ""}${confidence(t.daysAhead)}</span>
+            <span class="conf">${t === best ? "推薦・" : ""}${t.conf ? `預測${t.conf.agree}` : confidence(t.daysAhead)}</span>
           </div>
         </summary>
         <div class="detail">
+          <p class="ens-line">預報可信度：${confSentence(t)}</p>
           ${t.days.map((d, k) => `
             <div style="display:grid;gap:8px">
               <h3>${dayTitle(d, k)}　<span class="num ${level(d.score).cls}">${d.score} 分</span>${breakdownHTML(d)}</h3>
-              <p class="small muted">${fmtClock(d.startT, t.di + k)} 出發，預估 ${fmtClock(d.endT, t.di + k)} 到。純騎乘 ${fmtHours(d.moving)}（無風 ${fmtHours(d.calmMoving)}），加上休息共 ${fmtHours(d.endT - d.startT)}。${sunsetText(d, t.di + k)}。</p>
+              <p class="small muted">${fmtClock(d.startT, t.di + k)} 出發${d.auto ? "（自動選的最佳時間" + (startNote(d) ? "，" + startNote(d) : "") + "）" : ""}，預估 ${fmtClock(d.endT, t.di + k)} 到。純騎乘 ${fmtHours(d.moving)}（無風 ${fmtHours(d.calmMoving)}），加上休息共 ${fmtHours(d.endT - d.startT)}。${sunsetText(d, t.di + k)}。</p>
               ${segmentTableHTML(d, t.di + k)}
             </div>`).join("")}
         </div>
@@ -961,12 +1137,16 @@ function selectTrip(date) {
 // =====================================================
 // 9. 狀態、設定、整體繪製
 // =====================================================
-const state = { data: null, air: null, fetchedAt: 0, failReason: null, trips: [], dates: [], selected: null };
-const prefs = { mode: 1, calm: 25, useAir: false };
+const state = { data: null, air: null, ens: null, fetchedAt: 0, failReason: null, trips: [], dates: [], selected: null };
+const prefs = { mode: 1, calm: 25, useAir: false, start: { 1: "auto", 2: "auto" } };
 
 function loadPrefs() {
   try { Object.assign(prefs, JSON.parse(localStorage.getItem(PREF_KEY)) || {}); } catch (e) {}
   if (!MODES[prefs.mode]) prefs.mode = 1;
+  if (!prefs.start || typeof prefs.start !== "object") prefs.start = { 1: "auto", 2: "auto" };
+  for (const m of [1, 2]) {
+    if (prefs.start[m] !== "auto" && !MODES[m].startOptions.includes(prefs.start[m])) prefs.start[m] = "auto";
+  }
   document.getElementById("use-air").checked = prefs.useAir;
   const sel = document.getElementById("speed");
   if ([...sel.options].some(o => Number(o.value) === prefs.calm)) sel.value = String(prefs.calm); else prefs.calm = 25;
@@ -980,8 +1160,15 @@ function savePrefs() {
 function syncModeButtons() {
   document.getElementById("mode-1").setAttribute("aria-pressed", String(prefs.mode === 1));
   document.getElementById("mode-2").setAttribute("aria-pressed", String(prefs.mode === 2));
+  // 出發時間選單：依一日／兩日換選項
+  const M = MODES[prefs.mode];
+  const sel = document.getElementById("start");
+  sel.innerHTML = `<option value="auto">自動（${fmtHourOfDay(M.startOptions[0])}–${fmtHourOfDay(M.startOptions[M.startOptions.length - 1])} 找最好的）</option>` +
+    M.startOptions.map(h => `<option value="${h}">${fmtHourOfDay(h)}</option>`).join("");
+  sel.value = String(prefs.start[prefs.mode]);
+  const startText = prefs.start[prefs.mode] === "auto" ? "自動找最佳出發時間" : `${fmtHourOfDay(prefs.start[prefs.mode])} 出發`;
   document.getElementById("subtitle").textContent =
-    `新竹南寮 → 高雄左營・${Math.round(TOTAL_KM)} km・${prefs.mode === 1 ? "一日 05:00 出發" : "兩日 每天 06:00 出發"}・以風為主要考量`;
+    `新竹南寮 → 高雄左營・${Math.round(TOTAL_KM)} km・${M.label}・${startText}・以風為主要考量`;
 }
 
 function render() {
@@ -995,7 +1182,8 @@ function render() {
   selectTrip(trips.some(t => t.date === state.selected) ? state.selected : best.date);
 
   const time = new Date(state.fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  const airNote = prefs.useAir && !state.air ? "（這次沒抓到空氣品質，先不算空品）" : "";
+  const airNote = (prefs.useAir && !state.air ? "（這次沒抓到空氣品質，先不算空品）" : "") +
+    (state.ens ? "" : "（這次沒抓到系集預報，先不顯示可信度）");
   document.getElementById("status").textContent = state.failReason
     ? `這次沒抓到新預報：${state.failReason}。先顯示 ${time} 存下來的預報。${airNote}`
     : `預報更新時間：${time}${airNote}`;
@@ -1056,9 +1244,9 @@ function parseJSONLoose(text, serviceName) {
 }
 
 // 檢查點分成每 4 個一組去抓，資料量比較小；某一組失敗會自動再試一次
-async function fetchByGroups(baseUrl, extra, serviceName) {
+async function fetchByGroups(baseUrl, extra, serviceName, points = CHECKPOINTS, groupSize = 4) {
   const groups = [];
-  for (let i = 0; i < CHECKPOINTS.length; i += 4) groups.push(CHECKPOINTS.slice(i, i + 4));
+  for (let i = 0; i < points.length; i += groupSize) groups.push(points.slice(i, i + groupSize));
   const results = await Promise.all(groups.map(async group => {
     const params = new URLSearchParams({
       latitude: group.map(c => c.pos[0].toFixed(4)).join(","),
@@ -1073,12 +1261,30 @@ async function fetchByGroups(baseUrl, extra, serviceName) {
         return Array.isArray(r) ? r : [r]; // 只有一個地點時，回傳的不是陣列
       } catch (e) {
         lastErr = e;
-        if (e.message.includes("限制使用次數")) break; // 被限制了就不要再試
+        // 被限制了、或伺服器不接受這種查詢，再試也一樣，就不要再試
+        if (e.message.includes("限制使用次數") || e.message.includes("不接受這次的查詢")) break;
       }
     }
     throw lastErr;
   }));
   return results.flat();
+}
+
+// 系集預報：先試歐洲 ECMWF（51 種預測、15 天），不行再試美國 GFS（31 種預測）
+// 資料量比較大，所以一個地點抓一次
+async function fetchEnsemble() {
+  const points = ENS_CPS.map(i => CHECKPOINTS[i]);
+  for (const [model, days] of [["ecmwf_ifs025", "15"], ["gfs_seamless", "16"]]) {
+    try {
+      const list = await fetchByGroups("https://ensemble-api.open-meteo.com/v1/ensemble", {
+        hourly: "wind_speed_10m,wind_direction_10m", models: model, forecast_days: days, wind_speed_unit: "kmh",
+      }, "系集預報服務", points, 1);
+      if (list.length === points.length) return { model, list };
+    } catch (e) {
+      console.warn(`系集預報 ${model} 抓取失敗：`, e.message);
+    }
+  }
+  return null;
 }
 
 async function load() {
@@ -1095,20 +1301,25 @@ async function load() {
 
   try {
     // 天氣和空氣品質同時去抓。空氣品質抓不到也沒關係，只是不能算那一項
-    const [data, air] = await Promise.all([
+    // 系集預報抓不到也沒關係，只是不顯示可信度
+    const [data, air, ens] = await Promise.all([
       fetchByGroups("https://api.open-meteo.com/v1/forecast", weatherParams, "天氣服務"),
       fetchByGroups("https://air-quality-api.open-meteo.com/v1/air-quality", airParams, "空氣品質服務").catch(() => null),
+      fetchEnsemble().catch(() => null),
     ]);
-    Object.assign(state, { data, air, fetchedAt: Date.now(), failReason: null });
+    Object.assign(state, { data, air, ens, fetchedAt: Date.now(), failReason: null });
     render();
-    // 存一份在瀏覽器裡，下次沒網路時還能看
+    // 存一份在瀏覽器裡，下次沒網路時還能看（系集預報比較大，分開存）
     try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: state.fetchedAt, data, air })); } catch (e) {}
+    try { localStorage.setItem(ENS_CACHE_KEY, JSON.stringify(ens)); } catch (e) {}
   } catch (err) {
     // 抓失敗的話，試著用上次存下來的資料
     let cached = null;
     try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) {}
     if (cached) {
-      Object.assign(state, { data: cached.data, air: cached.air ?? null, fetchedAt: cached.fetchedAt, failReason: err.message || "發生錯誤" });
+      let ens = null;
+      try { ens = JSON.parse(localStorage.getItem(ENS_CACHE_KEY)); } catch (e) {}
+      Object.assign(state, { data: cached.data, air: cached.air ?? null, ens, fetchedAt: cached.fetchedAt, failReason: err.message || "發生錯誤" });
       try { render(); return; } catch (e) {}
     }
     showError(err.message || "發生錯誤");
@@ -1125,6 +1336,10 @@ document.getElementById("mode-1").addEventListener("click", () => { prefs.mode =
 document.getElementById("mode-2").addEventListener("click", () => { prefs.mode = 2; onPrefsChange(); });
 document.getElementById("speed").addEventListener("change", e => { prefs.calm = Number(e.target.value); onPrefsChange(); });
 document.getElementById("use-air").addEventListener("change", e => { prefs.useAir = e.target.checked; onPrefsChange(); });
+document.getElementById("start").addEventListener("change", e => {
+  prefs.start[prefs.mode] = e.target.value === "auto" ? "auto" : Number(e.target.value);
+  onPrefsChange();
+});
 document.getElementById("reload").addEventListener("click", load);
 
 document.getElementById("total-km").textContent = Math.round(TOTAL_KM);
