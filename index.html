@@ -665,6 +665,15 @@ function simulateDay(W, startT, fromCp, toCp, calmKmh, useAir) {
   };
 }
 
+// 整趟的分數。兩日的話，比較差的那天佔 2/3；
+// 但只要有一天被強陣風壓分，整趟也不能超過那個上限（兩天都要騎，危險的那天躲不掉）
+function tripScore(days, scores) {
+  let score = days.length === 1 ? scores[0] : Math.round((2 * Math.min(...scores) + Math.max(...scores)) / 3);
+  const caps = days.filter(d => d.gustCap).map(d => d.gustCap.cap);
+  if (caps.length) score = Math.min(score, ...caps);
+  return score;
+}
+
 // 陣風太強就把分數壓到上限
 function applyGustCap(score, maxGust) {
   const rule = GUST_CAPS.find(r => maxGust >= r.gust);
@@ -702,7 +711,7 @@ function evaluateAll() {
     trips.push({
       date: dates[di], di, daysAhead: di, days,
       // 兩日的話，比較差的那天佔 2/3
-      score: days.length === 1 ? scores[0] : Math.round((2 * Math.min(...scores) + Math.max(...scores)) / 3),
+      score: tripScore(days, scores),
       moving: days.reduce((s, d) => s + d.moving, 0),
       calmMoving: days.reduce((s, d) => s + d.calmMoving, 0),
       dark: days.reduce((s, d) => s + d.dark, 0),
