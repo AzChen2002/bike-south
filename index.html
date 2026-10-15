@@ -237,7 +237,7 @@ td.num { font-size: 0.95rem; }
       <li>假設你 06:00 出發、18:00 到，速度平均。每個小時算出你大概騎到哪裡，再拿那個地點那個小時的預報來評分。</li>
       <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。</li>
       <li><b>風</b>：只看「順著路線方向」的那一部分。順風每 1 km/h 加 0.5 分（最多 +10），逆風每 1 km/h 扣 1.2 分（最多 −36）。陣風超過 45 km/h 另外扣分。</li>
-      <li><b>氣溫</b>：體感溫度超過 33°C，每多 1 度扣 5 分；低於 12°C，每少 1 度扣 3 分。</li>
+      <li><b>氣溫</b>：每個小時的體感溫度超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。另外，一整天最熱的時候超過 35°C，因為熱會累積，那一天再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
       <li>每小時從 100 分開始扣，一天取平均。兩天合起來時，比較差的那天佔 2/3、比較好的那天佔 1/3，因為只要有一天很糟，整趟就會很辛苦。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
       <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>。預報越遠越不準，8 天以後的分數只能當參考。</li>
     </ul>
@@ -343,7 +343,7 @@ function scoreHour(w, heading) {
   // 氣溫（用體感溫度）
   const t = w.feels ?? w.temp ?? 25;
   let heatPenalty = 0;
-  if (t > 33) heatPenalty = Math.min((t - 33) * 5, 30);
+  if (t > 31) heatPenalty = Math.min((t - 31) * 5, 40);
   if (t < 12) heatPenalty = Math.min((12 - t) * 3, 20);
   score -= heatPenalty;
 
@@ -389,13 +389,17 @@ function evaluateDay(lookup, dateStr, day) {
     hours.push({ hour: h, km, place: ROUTE[pointIndex].name, w, score, along });
   }
   const avg = hours.reduce((s, x) => s + x.score, 0) / hours.length;
+  const maxFeels = Math.max(...hours.map(x => x.w.feels ?? x.w.temp ?? 0));
+  // 整天最熱的時候超過 35°C，熱會累積，整天再額外扣分（每 1 度扣 4 分，最多 20 分）
+  const heatDayPenalty = Math.round(clamp((maxFeels - 35) * 4, 0, 20));
   return {
     hours,
-    score: Math.round(avg),
+    score: Math.round(clamp(avg - heatDayPenalty, 0, 100)),
+    heatDayPenalty,
     maxRainProb: Math.max(...hours.map(x => x.w.rainProb ?? 0)),
     totalRain: hours.reduce((s, x) => s + (x.w.rain ?? 0), 0),
     avgAlong: hours.reduce((s, x) => s + x.along, 0) / hours.length,
-    maxFeels: Math.max(...hours.map(x => x.w.feels ?? x.w.temp ?? 0)),
+    maxFeels,
   };
 }
 
@@ -530,7 +534,7 @@ function renderTrips(trips, best) {
         <div class="detail">
           ${t.days.map((d, i) => `
             <div style="display:grid;gap:8px">
-              <h3>${DAYS[i].label}（${dateParts(i === 0 ? t.date : nextDate(t.date)).md}）${DAYS[i].from} → ${DAYS[i].to}　<span class="num ${level(d.score).cls}">${d.score} 分</span></h3>
+              <h3>${DAYS[i].label}（${dateParts(i === 0 ? t.date : nextDate(t.date)).md}）${DAYS[i].from} → ${DAYS[i].to}　<span class="num ${level(d.score).cls}">${d.score} 分</span>${d.heatDayPenalty ? `<span class="small muted" style="font-weight:400">（含整天高溫 −${d.heatDayPenalty}）</span>` : ""}</h3>
               ${hourTableHTML(d)}
             </div>`).join("")}
         </div>
@@ -544,14 +548,14 @@ function nextDate(dateStr) {
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
 }
 
-function render(apiData, fetchedAt, fromCache) {
+function render(apiData, fetchedAt, failReason) {
   const trips = evaluateAll(apiData);
   if (!trips.length) throw new Error("預報資料裡找不到可以評分的日期");
   const best = renderBest(trips);
   renderTrips(trips, best);
   const time = new Date(fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  document.getElementById("status").textContent = fromCache
-    ? `目前連不上網路，顯示 ${time} 存下來的預報`
+  document.getElementById("status").textContent = failReason
+    ? `這次沒抓到新預報：${failReason}。先顯示 ${time} 存下來的預報。`
     : `預報更新時間：${time}`;
 }
 
@@ -559,7 +563,7 @@ function showError(message) {
   document.getElementById("best").innerHTML = `
     <div class="msg error">
       <p><b>抓不到天氣預報</b></p>
-      <p class="small">${message}。請確認網路有連上，再按「重新整理」。</p>
+      <p class="small">${message}。過一下再按「重新整理」試試看。</p>
     </div>`;
   document.getElementById("trips").innerHTML = "";
   document.getElementById("status").textContent = "沒有資料";
@@ -582,12 +586,25 @@ async function load() {
     wind_speed_unit: "kmh",
   });
 
+  // 超過 20 秒沒回應就放棄
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+
   try {
-    const res = await fetch("https://api.open-meteo.com/v1/forecast?" + params);
-    if (!res.ok) throw new Error(`天氣服務回應錯誤（${res.status}）`);
+    let res;
+    try {
+      res = await fetch("https://api.open-meteo.com/v1/forecast?" + params, { signal: controller.signal });
+    } catch (e) {
+      if (e.name === "AbortError") throw new Error("天氣服務超過 20 秒沒回應");
+      if (!navigator.onLine) throw new Error("你的裝置沒有連上網路");
+      throw new Error("連不到天氣服務，可能是網路不穩或服務暫時有問題");
+    }
+    if (res.status === 429) throw new Error("天氣服務暫時限制使用次數，請過幾分鐘再試");
+    if (res.status >= 500) throw new Error(`天氣服務暫時故障（錯誤碼 ${res.status}）`);
+    if (!res.ok) throw new Error(`天氣服務不接受這次的查詢（錯誤碼 ${res.status}）`);
     const data = await res.json();
     const fetchedAt = Date.now();
-    render(data, fetchedAt, false);
+    render(data, fetchedAt, null);
     // 存一份在瀏覽器裡，下次沒網路時還能看
     try { localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt, data })); } catch (e) {}
   } catch (err) {
@@ -595,9 +612,11 @@ async function load() {
     let cached = null;
     try { cached = JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) {}
     if (cached) {
-      try { render(cached.data, cached.fetchedAt, true); return; } catch (e) {}
+      try { render(cached.data, cached.fetchedAt, err.message || "發生錯誤"); return; } catch (e) {}
     }
     showError(err.message || "發生錯誤");
+  } finally {
+    clearTimeout(timer);
   }
 }
 
