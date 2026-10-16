@@ -705,7 +705,8 @@ function simulateDay(W, startT, fromCp, toCp, calmKmh, useAir) {
   const avgPenalty = penSum / moving;
   const heatDayPenalty = Math.round(clamp((maxFeels - 35) * 4, 0, 20));
   const darkPenalty = Math.round(Math.min(dark * 4, 24));
-  const endSun = W[steps[steps.length - 1].weatherCp].sun[Math.floor(t / 24)];
+  // 跟「出發那天」的日落比（騎過半夜的話，抵達那天的日落不能拿來比）
+  const endSun = W[steps[steps.length - 1].weatherCp].sun[Math.floor(startT / 24)];
 
   return {
     fromCp, toCp, dist, startT, endT: t, steps, etas, sunset,
@@ -1299,7 +1300,8 @@ function simulateFrom(W, startT, startKm, endCp, calmKmh) {
     if (s.endsCp) etas.push({ cp: s.seg + 1, t });
   }
   const last = steps[steps.length - 1];
-  const endSun = last ? W[last.weatherCp].sun[Math.floor(t / 24)] : null;
+  // 跟「出發那天」的日落比（騎過半夜的話，抵達那天的日落不能拿來比）
+  const endSun = last ? W[last.weatherCp].sun[Math.floor(startT / 24)] : null;
   return { steps, etas, startT, endT: t, moving, maxGust, sunset, endCp,
            arrivedBeforeSunset: endSun ? t <= endSun.set : true, sunsetTime: endSun?.set };
 }
