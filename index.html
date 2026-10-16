@@ -345,7 +345,7 @@ details.windy summary span { font-weight: 400; font-size: 0.85rem; color: var(--
       <li><b>出發時間</b>：預設「自動」。一日會試 03:00～07:00、兩日每天試 05:00～08:00，每半小時試一次，選分數最高的時間（分數一樣就選最接近一日 05:00、兩日 06:00 的）。也可以在上面的選單自己指定。</li>
       <li><b>預報可信度</b>：另外抓「系集預報」（ECMWF 的 51 種預測，只看 10 天；抓不到時改用 GFS 的 31 種），每一種都跑一次模擬騎乘。「順風機率」是其中風讓你比無風更快的比例；「預測一致／普通／分歧」看各預測算出來的騎乘時間差多少。可信度不影響分數，只是幫你判斷這個分數能信幾成。</li>
       <li><b>模擬騎乘</b>：從出發時間開始，每 1 公里用「那個位置、那個時間」的風，算出用同樣的力氣能騎多快，一路累積出到達每個地點的時間。每騎 1 小時休息 10 分鐘也算進去。</li>
-      <li><b>風是主要考量</b>：力氣用「無風時速」來設定（上面的選單，以輕裝公路車計算）。風的分數：無風是 80 分，比無風每省 1% 的騎乘時間加 1 分（最高 100），每多花 1% 扣 1 分。</li>
+      <li><b>風是主要考量</b>：力氣用「無風時速」來設定（上面的選單，以輕裝公路車計算）。風的分數：整條路一直吹 <b>20 km/h 順風</b>才是 100 分；比無風每省 1% 的騎乘時間加 1 分，每多花 1% 扣 1 分。所以無風大約是 <span id="calm-base">74</span> 分（無風時速越慢，順風省下的比例越多，無風的分數就越低一點）。</li>
       <li>天氣預報的風速是離地 10 公尺的風，騎車的高度風比較小，所以用 70% 來計算。畫面上顯示的風速還是預報原本的數字。</li>
       <li><b>危險的風</b>：側風超過 25 km/h，每多 1 km/h 扣 1 分（最多 −15）；陣風超過 40 km/h，每多 1 km/h 扣 1.5 分（最多 −25）。</li>
       <li><b>強陣風安全上限</b>：騎乘途中最強的陣風（預估經過時間的前後 1 小時都算進去，因為實際速度可能比預估快或慢）到 60 km/h 以上，那天最多只能 59 分（勉強）；到 75 km/h 以上，最多只能 39 分（不建議）。順風再好也一樣，因為強陣風可能把人連車吹倒。</li>
@@ -529,6 +529,19 @@ function solveSpeed(alongKmh, calmKmh) {
   return Math.min(lo * 3.6, calmKmh * 1.6); // 順風再強，也不太可能一直維持超高速
 }
 
+// 風的分數的基準（無風時的分數）：
+// 讓「整條路一直吹 20 km/h 順風」剛好是 100 分，每省 1% 騎乘時間加 1 分。
+// 無風時速不同，同樣的順風省下的比例也不同，所以基準跟著時速算（25 km/h 時約 74 分）
+const FULL_SCORE_TAILWIND = 20;
+const windBaseCache = new Map();
+function windBase(calmKmh) {
+  if (!windBaseCache.has(calmKmh)) {
+    const savedPct = (1 - calmKmh / riderSpeed(FULL_SCORE_TAILWIND, calmKmh)) * 100;
+    windBaseCache.set(calmKmh, 100 - savedPct);
+  }
+  return windBaseCache.get(calmKmh);
+}
+
 // 把風拆成兩個部分：along 順著路線（正 = 順風、負 = 逆風）、cross 橫著吹（側風）
 // 注意：氣象的風向是「風從哪裡吹來」，所以風往 (風向 + 180) 的方向吹
 function windParts(speed, windFrom, heading) {
@@ -669,7 +682,7 @@ function simulateDay(W, startT, fromCp, toCp, calmKmh, useAir) {
 
   const dist = CHECKPOINTS[toCp].km - CHECKPOINTS[fromCp].km;
   const calmMoving = dist / calmKmh;
-  const windScore = clamp(80 + (calmMoving - moving) / calmMoving * 100, 0, 100);
+  const windScore = clamp(windBase(calmKmh) + (calmMoving - moving) / calmMoving * 100, 0, 100);
   const avgPenalty = penSum / moving;
   const heatDayPenalty = Math.round(clamp((maxFeels - 35) * 4, 0, 20));
   const darkPenalty = Math.round(Math.min(dark * 4, 24));
@@ -1459,6 +1472,7 @@ async function load(force = false) {
 // 設定變更時直接重算，不用重新抓資料
 function onPrefsChange() {
   savePrefs();
+  updateCalmBase();
   syncModeButtons();
   if (state.data) render();
 }
@@ -1473,7 +1487,9 @@ document.getElementById("start").addEventListener("change", e => {
 document.getElementById("reload").addEventListener("click", () => load(true));
 
 document.getElementById("total-km").textContent = Math.round(TOTAL_KM);
+function updateCalmBase() { document.getElementById("calm-base").textContent = Math.round(windBase(prefs.calm)); }
 loadPrefs();
+updateCalmBase();
 initMap();
 load();
 </script>
