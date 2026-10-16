@@ -10,12 +10,14 @@
 
 - `index.html`：整個網站就這一個檔（HTML + CSS + JS），沒有建置步驟。程式碼的註解用中文，寫法維持簡單的原生 JS
 - `tools/prep_route.py`：從 GPX 產生路線資料（`ROUTE_PTS`、`CHECKPOINTS`）
+- `tools/fetch_forecast.py`：GitHub Actions 用，抓 Open-Meteo 存成 `forecast.json`、`ensemble.json`（只用 Python 內建功能）。檢查點座標從 `index.html` 的 `ROUTE_PTS`、`CHECKPOINTS`、`ENS_CPS` 用跟網頁一樣的方法算，所以改路線不用改它
+- `.github/workflows/pages.yml`：每 3 小時（`17 */3 * * *` UTC）、推送到 `main`、或手動，執行 `fetch_forecast.py`，把 `index.html` 和兩個 JSON 一起發布到 GitHub Pages
 - 外部資源：Google Fonts、Leaflet 1.9.4（cdnjs）、OpenStreetMap 底圖、Open-Meteo API（不需要金鑰）、Windy 嵌入地圖（`embed.windy.com/embed2.html`，免費、不用金鑰）
 - **Windy 只用來給使用者對照，不拿它的數字算分數**：Windy 的資料 API 要付費，免費試用金鑰會回傳隨機打亂的假資料，而且金鑰放在公開網頁會外流；它的資料來源（ECMWF、GFS、ICON）Open-Meteo 都有免費提供。嵌入地圖預設收起來，打開 `#windy-box` 才放進 iframe。能不能用網址參數跳到指定日期時間還沒確認，目前用 `calendar=now`，請使用者自己拖時間軸
 
 ## 更新網站
 
-推送到 `main`，GitHub Pages 會自動部署（約 1～2 分鐘）。部署狀態可以這樣查：
+推送到 `main`，GitHub Actions 會抓預報並發布網站（約 1～3 分鐘）。GitHub Pages 的 Source 要設成「GitHub Actions」（不是 main 分支）。部署狀態可以這樣查：
 `gh api repos/AzChen2002/bike-south/actions/runs --jq '.workflow_runs[0] | .status, .conclusion'`
 （GitHub Pages 的設定 API 在雲端環境被擋，只能請使用者自己去 Settings → Pages 調整。）
 
@@ -69,6 +71,7 @@
 - 用 `parseJSONLoose` 解析：會把 `nan`、`inf` 換成 null。之前真實資料出現過一次解析錯誤，原因還沒確定
 - 系集預報：每個點抓一次。欄位名稱是 `wind_speed_10m`、`wind_speed_10m_member01`……，常常每 3～6 小時才有值，用 `fillGaps` 補中間的值。**實際的欄位格式還沒用真實資料確認過**
 - 時速用 `speedCache` 存起來重複使用（順風速度取到 0.5 km/h），不然自動找出發時間加上系集預報會算很久
+- **共用預報**（使用者的主意，為了不再出現「抓不到天氣預報」）：網頁先讀網站上的 `forecast.json`（6 小時內）和 `ensemble.json`（12 小時內），所有訪客共用，不碰 Open-Meteo 的次數。JSON 裡的 `points` 跟網頁算的座標差超過 0.001 就不用。共用的太舊或沒有，才走下面原本的做法；自己也抓不到時，改用手上最新的一份（就算太舊）
 - **Open-Meteo 免費版有使用次數上限**（使用者遇過「暫時限制使用次數」，HTTP 429），系集預報特別耗次數。所以：
   - 1 小時內重新打開網頁，直接用存下來的預報（`FRESH_MS`）；按「重新整理」才強制重抓天氣
   - 系集預報 3 小時內不重抓（`ENS_FRESH_MS`），而且是在天氣顯示之後才抓，抓到再補上可信度

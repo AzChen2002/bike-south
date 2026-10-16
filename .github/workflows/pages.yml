@@ -1,0 +1,45 @@
+# 更新天氣預報並發布網站
+# - 每 3 小時自動跑一次：抓 Open-Meteo 的預報，存成 forecast.json、ensemble.json，跟 index.html 一起發布
+# - 推送到 main 時也會跑（網頁有改就馬上發布）
+# - 也可以在 GitHub 的 Actions 頁面手動按「Run workflow」
+# 需要先把 Settings → Pages → Source 改成「GitHub Actions」
+name: 更新天氣預報並發布網站
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 */3 * * *"   # 每 3 小時的第 17 分（UTC 時間），避開整點大家都在跑的時候
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一時間只跑一個，避免兩次發布打架
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 抓天氣預報
+        run: python3 tools/fetch_forecast.py site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 發布網站
+        id: deployment
+        uses: actions/deploy-pages@v4

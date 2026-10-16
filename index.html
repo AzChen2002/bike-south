@@ -372,7 +372,7 @@ details.windy summary span { font-weight: 400; font-size: 0.85rem; color: var(--
       <li><b>空氣品質（選用）</b>：勾選後才算。AQI 51–100 每多 1 扣 0.2 分，101–150 每多 1 扣 0.4 分，150 以上再加扣，最多 −45。空品預報只有大約 5 天。</li>
       <li><b>合起來</b>：一天的分數 = 風的分數 − 雨、熱、危險風（和空品）扣分的平均 − 整天高溫 − 摸黑。兩日的話，比較差的那天佔 2/3。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
       <li><b>📍 我在哪</b>：用手機 GPS 找出你在路線的第幾公里，再從現在的位置和時間，用存下來的預報重新模擬剩下的路（不會多用天氣資料的次數）。位置只在手機上計算，不會傳出去。網頁要開著才會定位，螢幕關掉或切到別的 App 就會暫停。</li>
-      <li><b>省用量</b>：Open-Meteo 免費版有使用次數上限，所以 1 小時內重新打開網頁會直接用存下來的預報，系集預報則是 3 小時。要最新的請按「重新整理」。</li>
+      <li><b>共用預報</b>：Open-Meteo 免費版有使用次數上限，所以由 GitHub 每 3 小時自動抓一次，存在網站上給所有人共用，再多人來看也不會被限制。共用預報超過 6 小時沒更新時，網頁才會自己去抓。</li>
       <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>，地圖來自 OpenStreetMap，動態風場地圖來自 <a href="https://www.windy.com/" target="_blank" rel="noopener">Windy</a>（只是給你對照用，沒有算進分數）。預報越遠越不準，8 天以後只能當參考。一日 290 km 會長時間跟大車同路又有夜騎，前後燈、反光背心和補給點請自己準備好。</li>
     </ul>
   </section>
@@ -1509,7 +1509,7 @@ function selectTrip(date) {
 // =====================================================
 // 9. 狀態、設定、整體繪製
 // =====================================================
-const state = { data: null, air: null, ens: null, ensStatus: "loading", fetchedAt: 0, failReason: null, fromCache: false, trips: [], dates: [], selected: null };
+const state = { data: null, air: null, ens: null, ensStatus: "loading", fetchedAt: 0, failReason: null, source: null, trips: [], dates: [], selected: null };
 const prefs = { mode: 1, calm: 25, useAir: false, start: { 1: "auto", 2: "auto" } };
 
 function loadPrefs() {
@@ -1562,9 +1562,11 @@ function render() {
   if (state.ensStatus === "fail") notes.push(state.ens ? "系集預報沒更新到，先用上次的" : "這次沒抓到系集預報，先不顯示可信度");
   const head = state.failReason
     ? `這次沒抓到新預報：${state.failReason}。先顯示 ${time} 存下來的預報。`
-    : state.fromCache
-      ? `預報更新時間：${time}（1 小時內抓過，先用存下來的；要最新的請按「重新整理」）`
-      : `預報更新時間：${time}`;
+    : state.source === "shared"
+      ? `預報更新時間：${time}（網站每 3 小時自動更新）`
+      : state.source === "cache"
+        ? `預報更新時間：${time}（1 小時內抓過，先用存下來的；要最新的請按「重新整理」）`
+        : `預報更新時間：${time}`;
   document.getElementById("status").textContent = head + notes.map(n => `（${n}）`).join("");
 }
 
@@ -1681,23 +1683,63 @@ async function fetchEnsemble() {
   throw lastErr || new Error("系集預報資料不完整");
 }
 
-// force = true：使用者按了「重新整理」，不管存下來的資料多新都重抓天氣
+// 網站上的共用預報（GitHub 每 3 小時自動抓一次，所有訪客共用，不會碰到 Open-Meteo 的次數限制）
+// 超過這個時間就當作太舊，改成自己去抓
+const SHARED_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const SHARED_ENS_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+// 讀網站上的共用檔案。座標對不上（例如改了路線、還沒重新抓）就不用
+async function fetchShared(name, expectedPoints) {
+  try {
+    const res = await fetch(name, { cache: "no-store" });
+    if (!res.ok) return null;
+    const obj = parseJSONLoose(await res.text(), "共用預報");
+    const pts = obj.points || [];
+    const match = pts.length === expectedPoints.length && pts.every((p, i) =>
+      Math.abs(p[0] - expectedPoints[i].pos[0]) < 0.001 && Math.abs(p[1] - expectedPoints[i].pos[1]) < 0.001);
+    return match ? obj : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// force = true：使用者按了「重新整理」，不用瀏覽器自己存的那份
 async function load(force = false) {
   const cached = readCache(CACHE_KEY);
   const ensCached = readCache(ENS_CACHE_KEY);
   if (ensCached?.ens) state.ens = ensCached.ens;
-  state.ensStatus = ensCached?.ens && Date.now() - ensCached.fetchedAt < ENS_FRESH_MS ? "ok" : "loading";
+  state.ensStatus = "loading";
+  document.getElementById("status").textContent = "正在讀取天氣預報…";
+  if (!state.data) document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
 
-  // ---- 第 1 步：天氣和空氣品質（先顯示出來）----
-  const fresh = cached?.data && Date.now() - cached.fetchedAt < FRESH_MS;
+  const show = (source, fetchedAt, data, air, failReason = null) => {
+    Object.assign(state, { data, air: air ?? null, fetchedAt, failReason, source });
+    try { render(); return true; } catch (e) { console.warn("這份預報不能用：", e.message); return false; }
+  };
+
+  // ---- 第 1 步：網站上的共用預報 ----
+  const [shared, sharedEns] = await Promise.all([
+    fetchShared("forecast.json", CHECKPOINTS),
+    fetchShared("ensemble.json", ENS_CPS.map(i => CHECKPOINTS[i])),
+  ]);
+  if (sharedEns?.ens && Date.now() - sharedEns.generatedAt < SHARED_ENS_MAX_AGE_MS) {
+    Object.assign(state, { ens: sharedEns.ens, ensStatus: "ok" });
+  } else if (ensCached?.ens && Date.now() - ensCached.fetchedAt < ENS_FRESH_MS) {
+    state.ensStatus = "ok";
+  }
+
   let shown = false;
-  if (!force && fresh) {
-    Object.assign(state, { data: cached.data, air: cached.air ?? null, fetchedAt: cached.fetchedAt, failReason: null, fromCache: true });
-    try { render(); shown = true; } catch (e) { console.warn("存下來的預報不能用：", e.message); }
+  if (shared?.data && Date.now() - shared.generatedAt < SHARED_MAX_AGE_MS) {
+    shown = show("shared", shared.generatedAt, shared.data, shared.air);
+    if (shown) writeCache(CACHE_KEY, { fetchedAt: shared.generatedAt, data: shared.data, air: shared.air });
+  }
+
+  // ---- 第 2 步：共用預報沒有或太舊 → 用瀏覽器 1 小時內存的，或自己去抓 ----
+  if (!shown && !force && cached?.data && Date.now() - cached.fetchedAt < FRESH_MS) {
+    shown = show("cache", cached.fetchedAt, cached.data, cached.air);
   }
   if (!shown) {
     document.getElementById("status").textContent = "正在抓取天氣預報…";
-    if (!state.data) document.getElementById("best").innerHTML = `<div class="msg">正在計算未來兩週每個出發日的分數…</div>`;
     const weatherParams = {
       hourly: "temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
       daily: "sunrise,sunset",
@@ -1711,23 +1753,20 @@ async function load(force = false) {
         fetchByGroups("https://api.open-meteo.com/v1/forecast", weatherParams, "天氣服務"),
         fetchByGroups("https://air-quality-api.open-meteo.com/v1/air-quality", airParams, "空氣品質服務").catch(() => null),
       ]);
-      Object.assign(state, { data, air, fetchedAt: Date.now(), failReason: null, fromCache: false });
-      render();
-      // 存一份在瀏覽器裡，下次打開或沒網路時用
+      show("direct", Date.now(), data, air);
       writeCache(CACHE_KEY, { fetchedAt: state.fetchedAt, data, air });
     } catch (err) {
-      // 抓失敗的話，改用上次存下來的資料
-      if (cached?.data) {
-        Object.assign(state, { data: cached.data, air: cached.air ?? null, fetchedAt: cached.fetchedAt, failReason: err.message || "發生錯誤", fromCache: true });
-        try { render(); } catch (e) { showError(err.message || "發生錯誤"); return; }
-      } else {
+      // 抓失敗的話，改用手上最新的那一份（太舊的共用預報或瀏覽器存的）
+      const backups = [shared && { fetchedAt: shared.generatedAt, data: shared.data, air: shared.air }, cached]
+        .filter(b => b?.data).sort((a, b) => b.fetchedAt - a.fetchedAt);
+      if (!backups.some(b => show("cache", b.fetchedAt, b.data, b.air, err.message || "發生錯誤"))) {
         showError(err.message || "發生錯誤");
         return;
       }
     }
   }
 
-  // ---- 第 2 步：系集預報（抓到之後再補上可信度）----
+  // ---- 第 3 步：系集預報（共用的沒有或太舊，才自己抓；抓到之後再補上可信度）----
   if (state.ensStatus === "ok") return;
   try {
     const ens = await fetchEnsemble();
