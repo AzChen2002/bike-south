@@ -11,6 +11,7 @@
 - `index.html`：整個網站就這一個檔（HTML + CSS + JS），沒有建置步驟。程式碼的註解用中文，寫法維持簡單的原生 JS
 - `tools/prep_route.py`：從 GPX 產生路線資料（`ROUTE_PTS`、`CHECKPOINTS`）
 - `tools/fetch_forecast.py`：GitHub Actions 用，抓 Open-Meteo 存成 `forecast.json`、`ensemble.json`（只用 Python 內建功能）。檢查點座標從 `index.html` 的 `ROUTE_PTS`、`CHECKPOINTS`、`ENS_CPS` 用跟網頁一樣的方法算，所以改路線不用改它
+- **GitHub 規則：公開倉庫 60 天沒有任何提交，排程會被自動停用**（GitHub 會寄信通知）。停用後網站還是能用（網頁會自己去抓 Open-Meteo），重新啟用：Actions 頁面點這個工作流程 → Enable workflow，或推送任何提交
 - `.github/workflows/pages.yml`：每 3 小時（`17 */3 * * *` UTC）、推送到 `main`、或手動，執行 `fetch_forecast.py`，把 `index.html` 和兩個 JSON 一起發布到 GitHub Pages
 - 外部資源：Google Fonts、Leaflet 1.9.4（cdnjs）、OpenStreetMap 底圖、Open-Meteo API（不需要金鑰）、Windy 嵌入地圖（`embed.windy.com/embed2.html`，免費、不用金鑰）
 - **Windy 只用來給使用者對照，不拿它的數字算分數**：Windy 的資料 API 要付費，免費試用金鑰會回傳隨機打亂的假資料，而且金鑰放在公開網頁會外流；它的資料來源（ECMWF、GFS、ICON）Open-Meteo 都有免費提供。嵌入地圖預設收起來，打開 `#windy-box` 才放進 iframe。能不能用網址參數跳到指定日期時間還沒確認，目前用 `calendar=now`，請使用者自己拖時間軸
