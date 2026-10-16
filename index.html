@@ -152,6 +152,16 @@ button:focus-visible, summary:focus-visible, select:focus-visible, input:focus-v
 
 /* ---------- 地圖 ---------- */
 .map-section { display: grid; gap: 10px; }
+.live { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 10px; }
+.live-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+button.big { font-size: 1rem; font-weight: 700; padding: 10px 20px; background: var(--accent); color: var(--bg); }
+button.big:disabled { opacity: 0.6; cursor: wait; }
+#live-info { display: grid; gap: 6px; }
+.live-head { font-size: 1.05rem; }
+.live-head b, .live-eta b { font-family: var(--font-display); font-size: 1.35rem; }
+.live-eta { font-size: 1rem; }
+.live-ahead { display: grid; gap: 2px; font-size: 0.9rem; }
+@media (max-width: 480px) { button.big { width: 100%; } }
 .map-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; align-items: start; }
 #map {
   height: 460px; border-radius: 10px; border: 1px solid var(--line);
@@ -310,6 +320,14 @@ details.windy summary span { font-weight: 400; font-size: 0.85rem; color: var(--
       <span><i class="swatch" style="background:var(--bad)"></i>逆風</span>
       <span><i class="swatch" style="background:var(--muted)"></i>幾乎無風</span>
     </div>
+    <div class="live">
+      <div class="live-controls">
+        <button type="button" class="big" id="locate">📍 我在哪</button>
+        <label class="toggle" for="auto-locate"><input type="checkbox" id="auto-locate"> 每 5 分鐘自動更新</label>
+      </div>
+      <p class="small muted">騎車途中停下來時按一下：在地圖上找出你的位置，並用現在的時間重新預估剩下的路。位置只在手機上計算，不會傳出去。</p>
+      <div id="live-info" hidden></div>
+    </div>
     <div class="map-grid">
       <div id="map" role="region" aria-label="路線地圖"></div>
       <div class="eta" id="eta"></div>
@@ -353,6 +371,7 @@ details.windy summary span { font-weight: 400; font-size: 0.85rem; color: var(--
       <li><b>下雨</b>：降雨機率每 10% 扣 3.5 分，每 1 mm 雨量扣 15 分（最多算到 4 mm）。<b>氣溫</b>：體感超過 31°C，每多 1 度扣 5 分（最多 −40）；低於 12°C，每少 1 度扣 3 分。一天最熱超過 35°C，再額外扣分，每多 1 度扣 4 分（最多 −20）。</li>
       <li><b>空氣品質（選用）</b>：勾選後才算。AQI 51–100 每多 1 扣 0.2 分，101–150 每多 1 扣 0.4 分，150 以上再加扣，最多 −45。空品預報只有大約 5 天。</li>
       <li><b>合起來</b>：一天的分數 = 風的分數 − 雨、熱、危險風（和空品）扣分的平均 − 整天高溫 − 摸黑。兩日的話，比較差的那天佔 2/3。80 分以上適合出發，60–79 可以考慮，40–59 勉強，40 以下不建議。</li>
+      <li><b>📍 我在哪</b>：用手機 GPS 找出你在路線的第幾公里，再從現在的位置和時間，用存下來的預報重新模擬剩下的路（不會多用天氣資料的次數）。位置只在手機上計算，不會傳出去。網頁要開著才會定位，螢幕關掉或切到別的 App 就會暫停。</li>
       <li><b>省用量</b>：Open-Meteo 免費版有使用次數上限，所以 1 小時內重新打開網頁會直接用存下來的預報，系集預報則是 3 小時。要最新的請按「重新整理」。</li>
       <li>天氣資料來自 <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>，地圖來自 OpenStreetMap，動態風場地圖來自 <a href="https://www.windy.com/" target="_blank" rel="noopener">Windy</a>（只是給你對照用，沒有算進分數）。預報越遠越不準，8 天以後只能當參考。一日 290 km 會長時間跟大車同路又有夜騎，前後燈、反光背心和補給點請自己準備好。</li>
     </ul>
@@ -1225,6 +1244,256 @@ function updateWindyHint(trip) {
     `把 Windy 的時間軸拖到這段時間，看看箭頭是不是一路從北往南吹。`;
 }
 
+// =====================================================
+// 8b. 騎乘中：用手機 GPS 找出你在路線的哪裡，再從「現在的位置和時間」重新預估剩下的路
+//     位置只在手機上計算，不會傳到任何地方
+// =====================================================
+const AUTO_LOCATE_MS = 5 * 60 * 1000;
+const OFF_ROUTE_KM = 1.5;
+const live = { active: false, last: null, timer: null };
+
+// 現在的台灣時間：{ date: "2026-10-16", hours: 14.08 }
+function nowInTaipei() {
+  const s = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Taipei" }); // 「2026-10-16 14:05:09」
+  return { date: s.slice(0, 10), hours: Number(s.slice(11, 13)) + Number(s.slice(14, 16)) / 60 };
+}
+
+// GPS 位置 → 路線上最近的點：第幾公里、離路線多遠（公里）
+function locateOnRoute(lat, lon) {
+  const kx = 111.32 * Math.cos(toRad(lat)), ky = 110.57; // 1 度大約幾公里
+  let best = { dist: Infinity, km: 0 };
+  for (let i = 0; i < ROUTE_PTS.length - 1; i++) {
+    const a = ROUTE_PTS[i], b = ROUTE_PTS[i + 1];
+    const ax = (a[1] - lon) * kx, ay = (a[0] - lat) * ky;
+    const dx = (b[1] - a[1]) * kx, dy = (b[0] - a[0]) * ky;
+    const len2 = dx * dx + dy * dy;
+    const f = len2 ? clamp(-(ax * dx + ay * dy) / len2, 0, 1) : 0;
+    const d = Math.hypot(ax + f * dx, ay + f * dy);
+    if (d < best.dist) best = { dist: d, km: CUM_KM[i] + f * (CUM_KM[i + 1] - CUM_KM[i]) };
+  }
+  return best;
+}
+
+function nearestCp(km) {
+  return CHECKPOINTS.reduce((best, c, i) => Math.abs(c.km - km) < Math.abs(CHECKPOINTS[best].km - km) ? i : best, 0);
+}
+
+// 從 startKm、startT 開始，模擬騎到檢查點 endCp
+function simulateFrom(W, startT, startKm, endCp, calmKmh) {
+  let t = startT, moving = 0, maxGust = 0, sunset = null;
+  const steps = [], etas = [];
+  for (const s of STEPS) {
+    if (s.seg >= endCp || s.to <= startKm) continue;
+    const from = Math.max(s.from, startKm), len = s.to - from;
+    const hrs = W[s.weatherCp].hours, hi = Math.floor(t);
+    const w = hrs[hi];
+    if (!w) return null; // 超過預報範圍
+    const { along, cross } = windParts(w.wind ?? 0, w.windDir ?? 0, s.heading);
+    const dMove = len / riderSpeed(along, calmKmh);
+    const dClock = dMove * (1 + REST_PER_HOUR);
+    const sun = W[s.weatherCp].sun[Math.floor(t / 24)];
+    if (sun && !sunset && t <= sun.set && t + dClock > sun.set) sunset = { km: from, t: sun.set, cp: s.weatherCp };
+    for (let k = hi - 1; k <= hi + 1; k++) if (hrs[k]) maxGust = Math.max(maxGust, hrs[k].gust ?? 0);
+    steps.push({ ...s, from, len, t, w, along, cross, dMove });
+    t += dClock; moving += dMove;
+    if (s.endsCp) etas.push({ cp: s.seg + 1, t });
+  }
+  const last = steps[steps.length - 1];
+  const endSun = last ? W[last.weatherCp].sun[Math.floor(t / 24)] : null;
+  return { steps, etas, startT, endT: t, moving, maxGust, sunset, endCp,
+           arrivedBeforeSunset: endSun ? t <= endSun.set : true, sunsetTime: endSun?.set };
+}
+
+// 把接下來的路，依「順風／側風／逆風」分成幾段（太短的段落併進前一段）
+function windAhead(steps) {
+  const groups = [];
+  for (const s of steps) {
+    const key = windKind(s.along, s.cross).key;
+    const g = groups[groups.length - 1];
+    if (g && (g.key === key || s.to - g.from < 5)) {
+      g.to = s.to; g.along += s.along * s.len; g.cross += s.cross * s.len; g.len += s.len;
+    } else {
+      groups.push({ key, from: s.from, to: s.to, along: s.along * s.len, cross: s.cross * s.len, len: s.len });
+    }
+  }
+  // 依平均後的風重新判斷種類，相鄰同一種的再合併一次
+  const merged = [];
+  for (const g of groups) {
+    const along = g.along / g.len, cross = g.cross / g.len;
+    const key = windKind(along, cross).key;
+    const prev = merged[merged.length - 1];
+    if (prev && prev.key === key) {
+      prev.along = (prev.along * prev.len + along * g.len) / (prev.len + g.len);
+      prev.cross = (prev.cross * prev.len + cross * g.len) / (prev.len + g.len);
+      prev.len += g.len; prev.to = g.to;
+    } else {
+      merged.push({ key, from: g.from, to: g.to, len: g.len, along, cross });
+    }
+  }
+  return merged;
+}
+
+function setLiveMessage(html, isError) {
+  const box = document.getElementById("live-info");
+  box.hidden = false;
+  box.innerHTML = `<p class="${isError ? "lv-bad" : "muted"}">${html}</p>`;
+}
+
+function locate() {
+  if (!navigator.geolocation) {
+    setLiveMessage("這個瀏覽器不能定位。如果是用 LINE 打開的，請改用 Safari 或 Chrome 打開這個網址。", true);
+    return;
+  }
+  if (!state.data) { setLiveMessage("天氣預報還沒載入，等一下再按。", true); return; }
+  const btn = document.getElementById("locate");
+  btn.disabled = true; btn.textContent = "定位中…";
+  navigator.geolocation.getCurrentPosition(pos => {
+    btn.disabled = false; btn.textContent = "📍 我在哪";
+    live.active = true; live.last = pos;
+    renderLive(pos);
+  }, err => {
+    btn.disabled = false; btn.textContent = "📍 我在哪";
+    const msg = {
+      1: "你沒有允許這個網站使用位置。iPhone：設定 → 隱私權與安全性 → 定位服務 → Safari 網站，改成「使用 App 期間」。Android Chrome：點網址列左邊的圖示 → 權限 → 位置，改成允許。改完再按一次。",
+      2: "找不到 GPS 訊號。到空曠一點的地方再試一次。",
+      3: "定位太久沒有回應，再按一次試試看。",
+    }[err.code] || "定位失敗，再按一次試試看。";
+    setLiveMessage(msg, true);
+  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+}
+
+function renderLive(pos) {
+  const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+  const on = locateOnRoute(lat, lon);
+  const now = nowInTaipei();
+  const di = state.dates.indexOf(now.date);
+  const clock = fmtClock(now.hours, 0);
+  if (di < 0) { setLiveMessage("存下來的預報沒有涵蓋今天，請按上面的「重新整理」再定位一次。", true); return; }
+
+  const { W } = buildWeather(state.data, null);
+  const twoDayFirst = prefs.mode === 2 && on.km < CHECKPOINTS[SPLIT_CP].km - 0.5;
+  const endCp = twoDayFirst ? SPLIT_CP : LAST_CP;
+  const endKm = CHECKPOINTS[endCp].km;
+  const sim = on.km < endKm - 0.5 ? simulateFrom(W, di * 24 + now.hours, on.km, endCp, prefs.calm) : null;
+
+  const offRoute = on.dist > OFF_ROUTE_KM
+    ? `<p class="lv-bad">⚠ 你離路線 ${on.dist.toFixed(1)} km，可能不在這條路線上。下面的預估是從路線上最近的點算的。</p>` : "";
+  const head = `
+    <div class="live-head">你在第 <b>${Math.round(on.km)} km</b>・${cpLabel(nearestCp(on.km))}</div>
+    <p class="small muted">${clock} 定位・離路線 ${on.dist < 1 ? Math.round(on.dist * 1000) + " m" : on.dist.toFixed(1) + " km"}・定位精度 ±${Math.round(accuracy)} m</p>
+    ${offRoute}`;
+
+  let body;
+  if (on.km >= endKm - 0.5) {
+    body = `<p class="live-eta">🎉 你已經到${cpLabel(endCp)}了！</p>`;
+  } else if (!sim) {
+    body = `<p class="lv-bad">預報範圍不夠算到終點，請按上面的「重新整理」。</p>`;
+  } else {
+    const ahead = windAhead(sim.steps).slice(0, 5);
+    body = `
+      ${twoDayFirst ? `<p class="small muted">兩日行程：今天的目的地是${cpLabel(SPLIT_CP)}。</p>` : ""}
+      <p class="live-eta">剩下 <b>${Math.round(endKm - on.km)} km</b>，現在繼續騎，預估 <b>${fmtClock(sim.endT, di)}</b> 到${cpLabel(endCp)}</p>
+      <p class="small muted">純騎乘約 ${fmtHours(sim.moving)}，加上休息共 ${fmtHours(sim.endT - sim.startT)}。${
+        sim.arrivedBeforeSunset ? `日落 ${fmtClock(sim.sunsetTime, di)} 前會到。` :
+        sim.sunset ? `日落 ${fmtClock(sim.sunset.t, di)} 時大約在${cpLabel(sim.sunset.cp)}（${Math.round(sim.sunset.km)} km），記得開燈。` : "現在已經天黑了，記得開燈。"}</p>
+      ${sim.maxGust >= STRONG_GUST ? `<p class="lv-bad">⚠ 接下來的路上陣風會到 ${Math.round(sim.maxGust)} km/h，注意安全，必要時找地方休息。</p>` : ""}
+      <div class="live-ahead">
+        <div class="small muted">接下來的風：</div>
+        ${ahead.map(g => `<div>${arrowSVG(g.along, g.cross, 16)} <span class="num">${Math.round(g.from)}–${Math.round(g.to)} km</span>　${windText(g.along, g.cross)}${windKind(g.along, g.cross).calm ? "" : " km/h"}</div>`).join("")}
+      </div>`;
+  }
+
+  const box = document.getElementById("live-info");
+  box.hidden = false;
+  box.innerHTML = `${head}${body}<button type="button" id="live-exit">回到行前預估</button>`;
+  document.getElementById("live-exit").addEventListener("click", exitLive);
+
+  document.getElementById("map-caption").textContent = `騎乘中・${clock} 的位置`;
+  document.querySelectorAll("details.trip").forEach(el => el.classList.remove("on-map"));
+  drawLiveMap(lat, lon, accuracy, on, sim);
+  renderLiveEta(on, sim, di, clock);
+}
+
+function drawLiveMap(lat, lon, accuracy, on, sim) {
+  if (!map) return;
+  routeLayer.clearLayers();
+  const colors = { good: cssVar("--good"), warn: cssVar("--warn"), bad: cssVar("--bad"), calm: cssVar("--muted") };
+  // 已經騎過的路段：淡灰色
+  if (on.km > 0.5) L.polyline(routeSlice(0, on.km), { color: cssVar("--muted"), weight: 4, opacity: 0.4 }).addTo(routeLayer);
+  // 接下來的路段：依「騎到那裡時的風」上色
+  if (sim) {
+    for (const g of windAhead(sim.steps)) {
+      L.polyline(routeSlice(g.from, g.to), { color: colors[g.key], weight: 5, opacity: 0.9 }).addTo(routeLayer);
+    }
+    sim.etas.forEach(e => {
+      const c = CHECKPOINTS[e.cp];
+      L.circleMarker(c.pos, { radius: e.cp === sim.endCp ? 6 : 4, weight: 2, color: cssVar("--fg"), fillColor: cssVar("--surface"), fillOpacity: 1 })
+        .bindTooltip(`${cpLabel(e.cp)}・${Math.round(c.km)} km・${fmtClock(e.t, Math.floor(sim.startT / 24))}`,
+          { permanent: e.cp === sim.endCp, direction: "right", offset: [6, 0], className: "map-label" })
+        .addTo(routeLayer);
+    });
+    if (sim.sunset) {
+      L.circleMarker(pointAtKm(sim.sunset.km), { radius: 7, weight: 2, color: cssVar("--warn"), fillColor: cssVar("--warn"), fillOpacity: 0.5 })
+        .bindTooltip(`日落 ${fmtClock(sim.sunset.t, Math.floor(sim.startT / 24))}`, { permanent: true, direction: "left", offset: [-6, 0], className: "map-label" })
+        .addTo(routeLayer);
+    }
+  }
+  // 你的位置：藍點 + 定位精度的圓圈；離路線有點遠時，畫虛線連到路線上最近的點
+  if (on.dist > 0.2) L.polyline([[lat, lon], pointAtKm(on.km)], { color: cssVar("--accent"), weight: 2, dashArray: "4 4" }).addTo(routeLayer);
+  L.circle([lat, lon], { radius: accuracy, color: cssVar("--accent"), weight: 1, fillOpacity: 0.1 }).addTo(routeLayer);
+  L.circleMarker([lat, lon], { radius: 8, weight: 3, color: "#fff", fillColor: cssVar("--accent"), fillOpacity: 1 })
+    .bindTooltip("你在這裡", { permanent: true, direction: "top", offset: [0, -8], className: "map-label" })
+    .addTo(routeLayer);
+  map.setView([lat, lon], 10);
+}
+
+function renderLiveEta(on, sim, di, clock) {
+  const rows = [`<tr class="day-row"><td>📍 你在這裡</td><td class="num">${Math.round(on.km)}</td><td class="num">${clock}</td><td></td></tr>`];
+  if (sim) {
+    sim.etas.forEach((e, i) => {
+      if (CHECKPOINTS[e.cp].km - on.km < 0.5) return; // 就在你旁邊的檢查點不用再列
+      if (sim.sunset && e.t > sim.sunset.t && (i === 0 || sim.etas[i - 1].t <= sim.sunset.t)) {
+        rows.push(`<tr class="sun-row"><td>日落</td><td class="num">${Math.round(sim.sunset.km)}</td><td class="num">${fmtClock(sim.sunset.t, di)}</td><td></td></tr>`);
+      }
+      const seg = sim.steps.filter(s => s.seg === e.cp);
+      const mv = seg.reduce((a, x) => a + x.dMove, 0);
+      const arrow = seg.length ? arrowSVG(seg.reduce((a, x) => a + x.along * x.dMove, 0) / mv, seg.reduce((a, x) => a + x.cross * x.dMove, 0) / mv, 14) : "";
+      rows.push(`<tr><td>${cpLabel(e.cp)}</td><td class="num">${Math.round(CHECKPOINTS[e.cp].km)}</td><td class="num">${fmtClock(e.t, di)}</td><td>${arrow}</td></tr>`);
+    });
+  }
+  document.getElementById("eta").innerHTML = `
+    <table>
+      <thead><tr><th>地點</th><th>km</th><th>預估到達</th><th title="下一段的風">下一段</th></tr></thead>
+      <tbody>${rows.join("")}</tbody>
+    </table>`;
+}
+
+function exitLive() {
+  live.active = false;
+  document.getElementById("live-info").hidden = true;
+  const auto = document.getElementById("auto-locate");
+  if (auto.checked) { auto.checked = false; setAutoLocate(false); }
+  if (state.selected) selectTrip(state.selected);
+  if (map) map.fitBounds(L.latLngBounds(ROUTE_PTS), { padding: [16, 16] });
+}
+
+function setAutoLocate(on) {
+  clearInterval(live.timer);
+  live.timer = null;
+  if (!on) return;
+  locate();
+  // 每 5 分鐘定位一次；網頁沒在畫面上時跳過（省電）
+  live.timer = setInterval(() => { if (!document.hidden) locate(); }, AUTO_LOCATE_MS);
+}
+
+document.getElementById("locate").addEventListener("click", locate);
+document.getElementById("auto-locate").addEventListener("change", e => setAutoLocate(e.target.checked));
+// 切回這個網頁時，如果開著自動更新、而且上次定位超過 5 分鐘，就馬上定位一次
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !live.timer) return;
+  if (!live.last || Date.now() - live.last.timestamp > AUTO_LOCATE_MS) locate();
+});
+
 function selectTrip(date) {
   const trip = state.trips.find(t => t.date === date);
   if (!trip) return;
@@ -1283,6 +1552,7 @@ function render() {
   renderLegend();
   renderTrips(trips, best);
   selectTrip(trips.some(t => t.date === state.selected) ? state.selected : best.date);
+  if (live.active && live.last) renderLive(live.last);
 
   const time = new Date(state.fetchedAt).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const notes = [];
